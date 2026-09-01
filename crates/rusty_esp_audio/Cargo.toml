@@ -1,0 +1,30 @@
+[package]
+name = "rusty_esp_audio"
+description = "ESP-ADF / ESP-GMF / esp_codec_dev remade in Rust: I2S/PDM capture and playback, a fixed-block audio pipeline, codec-chip drivers, Opus/FLAC/ADPCM framing via the Remade codecs. Memory safe, no_std core."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+readme = "../../README.md"
+documentation = "https://docs.rs/rusty_esp_audio"
+keywords = ["esp32", "embedded", "no-std", "mata", "remade-with-rust"]
+categories = ["embedded", "no-std", "hardware-support"]
+
+[features]
+default = ["std"]
+std = ["rusty_esp_audio-core/std", "rusty_esp_audio-esp/std"]
+alloc = ["rusty_esp_audio-core/alloc"]
+# Track B: bare metal, esp-hal + Embassy.
+esp-hal = ["rusty_esp_audio-esp/esp-hal"]
+# Track A: std on ESP-IDF via esp-idf-svc.
+esp-idf = ["rusty_esp_audio-esp/esp-idf"]
+
+[dependencies]
+rusty_esp_audio-core = { workspace = true }
+rusty_esp_audio-esp = { workspace = true }
+
+[lints]
+workspace = true
