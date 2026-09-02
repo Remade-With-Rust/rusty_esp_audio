@@ -7,7 +7,10 @@ The chip backends for [`rusty_esp_audio`](https://crates.io/crates/rusty_esp_aud
 - `esp-idf` — Track A, `std` on ESP-IDF via esp-idf-svc.
 
 With neither feature the crate compiles to the backend traits only, so the host
-build and the tests never need a chip. This is the only crate in the workspace
+build and the tests never need a chip. The `std` feature adds the Track A
+transport that runs unchanged on the host and on ESP-IDF: `net` (raw PCM over
+UDP) and `wavfile` (WAV files); `esp-idf` adds `idf::PdmIn`, the PDM
+microphone over esp-idf-hal. This is the only crate in the workspace
 that may contain a fenced `unsafe` block, and only at a DMA or FFI boundary,
 with the invariant written beside it.
 

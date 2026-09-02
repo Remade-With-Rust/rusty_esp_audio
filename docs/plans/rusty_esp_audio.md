@@ -9,7 +9,9 @@ speaker on an ESP32 is a `PcmBlock` source or sink like any other.
 Family plan: Janus `docs/plans/janus-mission.md`. Layer 1 · media. Depends on
 `rusty_esp_core` only.
 
-Written 2026-09-01. Status: **scaffold.**
+Written 2026-09-01. Status: **A0 shipped on the host; A1 host half done
+(transport, PDM backend, firmware project) — the board is next.** Numbers in
+`docs/LEDGER.md`.
 
 ---
 
@@ -30,24 +32,30 @@ Written 2026-09-01. Status: **scaffold.**
 ### `rusty_esp_audio-core` (`no_std`, `forbid(unsafe)`)
 
 ```rust
+// As shipped at A0 (2026-09-01):
 pub trait Element {
-    fn format(&self) -> PcmFormat;
-    /// Process one block INTO `out`; returns the bytes produced (may be 0 or > in.len()).
-    fn process(&mut self, input: PcmBlock, out: &mut [u8]) -> Result<usize>;
+    fn output_format(&self, input: PcmFormat) -> Result<PcmFormat>;      // may change rate/channels/encoding
+    fn max_output_bytes(&self, input: PcmFormat, input_bytes: usize) -> usize; // default = input_bytes
+    fn process(&mut self, input: PcmBlock<'_>, out: &mut [u8]) -> Result<usize>; // whole frames, may be 0
+    fn reset(&mut self) {}
 }
-pub struct Pipeline<'e, const N: usize> { elements: [&'e mut dyn Element; N], /* scratch over caller memory */ }
+pub struct Pipeline<'e, const N: usize> { /* [&mut dyn Element; N]; ping-pongs the two halves of ONE caller scratch */ }
+//   process(input, scratch) -> Result<Option<PcmBlock<'scratch>>>; scratch_bytes(); output_format()
 
-pub struct RingBuffer<'m> { /* SPSC over &'m mut [u8]; push/pop whole frames */ }
+pub struct RingBuffer<'m> { /* whole-frame ring over &'m mut [u8]; push (Busy + drop count when full), push_overwrite, pop, pop_exact, high_water */ }
 pub trait AudioSource { fn format(&self) -> PcmFormat; fn read<'b>(&mut self, out: &'b mut [u8]) -> Result<PcmBlock<'b>>; }
-pub trait AudioSink   { fn format(&self) -> PcmFormat; fn write(&mut self, block: PcmBlock) -> Result<()>; }
+pub trait AudioSink   { fn format(&self) -> PcmFormat; fn write(&mut self, block: PcmBlock<'_>) -> Result<()>; }
+pub mod source   { SineSource (test tone), CountingSink }
 
-pub mod elements { Gain, DcBlock, Biquad(HighPass|LowPass|Peak), Agc, EnergyVad, Mixer, LinearResampler, Mono<->Stereo }
-pub mod codec    { pcm (format conversion i16<->i24in32<->f32), adpcm_ima (encode/decode), wav (header writer),
-                   flac (feature "flac": rusty_flac encoder over caller buffers) }
-pub mod chip     { pub struct Register { addr: u8, value: u8 }
-                   pub trait CodecChip { fn init(&mut self, cfg: &ChipConfig) -> Result<()>; fn set_volume(&mut self, db: i8) -> Result<()>; fn mute(&mut self, bool) -> Result<()>; }
-                   pub mod es8311; pub mod es7210; pub mod es8388; }
+pub mod elements { Gain (Q15), DcBlock, Biquad (LowPass|HighPass|Peak|Notch, RBJ, DF1 f32), Agc, EnergyVad,
+                   MonoToStereo, StereoToMono, mix_i16, LinearResampler (exact rational phase), Convert }
+pub mod codec    { pcm (I16<->I24In32<->I32<->F32, ffmpeg rules), adpcm_ima (Encoder/Decoder, WAV layout),
+                   wav (WavHeader write/parse: PCM, float, IMA) }
+// Still to come: chip::{Register, CodecChip, es8311, es7210, es8388} at A2; flac at A3.
 ```
+
+Every element takes interleaved i16 (the stateful ones up to 2 channels);
+`Convert` and `codec::pcm` move between encodings at the edges.
 
 Rules: blocks are fixed size and caller-owned; no element allocates; every
 element has a host test against a reference (numpy/scipy for filters with a
@@ -77,8 +85,8 @@ stated tolerance, byte-identical for ADPCM/FLAC/format conversion).
 
 | # | Deliverable | Kill test |
 |---|---|---|
-| **A0** | elements, `RingBuffer`, `Pipeline`, `adpcm_ima`, `wav`, format conversions, host tests with synthetic + recorded PCM fixtures | biquad/AGC/VAD within stated tolerance of a scipy reference; ADPCM round-trip byte-identical to a reference encoder; riscv32 checks green |
-| **A1** (J2) | PDM mic on XIAO S3 Sense (Track A) → `EnergyVad` → PCM/WAV over UDP to a laptop or the Pi | the laptop plays camera + mic together; 10 minutes with the drop counter recorded |
+| **A0** ✅ 2026-09-01 | elements, `RingBuffer`, `Pipeline`, `adpcm_ima`, `wav`, format conversions, host tests with synthetic PCM (recorded-speech fixtures still to add) | **passed:** biquads within 1 LSB of ffmpeg (f64 DF1) and scipy `lfilter`; IMA ADPCM **byte-identical to ffmpeg in both directions** (mono and stereo), PCM conversions byte-identical to swresample; AGC/VAD/DC-block/resampler property tests; riscv32 both rungs green; 45 + 3 + 6 tests. `docs/LEDGER.md` |
+| **A1** (J2) ◐ host half 2026-09-01 | PDM mic on XIAO S3 Sense (Track A) → `DcBlock` → `EnergyVad` → raw s16le PCM over UDP to a laptop or the Pi. **Done on the host:** `net::{UdpPcmSender, UdpPcmReceiver}` (ffmpeg reads the datagrams straight off the socket), `wavfile::WavWriter` + `pcm_record` (ffprobe-verified), `tone_send`, `idf::PdmIn` over esp-idf-hal, the firmware project `firmware/xiao-s3-sense-idf-pdm-udp` **builds** for xtensa-esp32s3-espidf (ESP-IDF v5.5.1; 986,688 B image, 64 % of the 1.5 MiB factory partition) | the laptop plays camera + mic together; 10 minutes with the drop counter recorded — **needs the board** |
 | **A2** | ES8311 + ES7210 on Korvo-2 / S3-EYE; speaker out; loopback | mic → gain → speaker loopback with a measured latency; register tables re-derived and attributed |
 | **A3** | `rusty_flac` `no_std` → FLAC blocks on-chip | on-chip FLAC bytes identical to the host encoder for the same PCM; decodes in `rff` |
 | **A4** | Opus decision gate: measure `rusty-opus` scalar CELT on S3 vs budget | a ledger row with cycles/frame; go/no-go recorded |
@@ -108,3 +116,6 @@ stated tolerance, byte-identical for ADPCM/FLAC/format conversion).
 | 2026-09-01 | Fixed-block, caller-owned pipeline; no per-block heap. |
 | 2026-09-01 | First on-chip codecs: PCM, IMA-ADPCM, FLAC. Opus is a measured decision at A4. |
 | 2026-09-01 | ESP-SR is remade as a **lite** front end (VAD/AGC/DC block); wake word and AEC are non-goals for v1; ASR/TTS live in FFAI on the host. |
+| 2026-09-01 | IMA ADPCM: the decoder is the IMA reference expansion (what ffmpeg and every player decode with); the encoder tracks the decoder by default (closed loop) and offers `ffmpeg_compatible()` for byte parity with `adpcm_ima_wav`, whose encoder uses a different prediction rule than its own decoder. Found by the oracle, not by reading. |
+| 2026-09-01 | A1 transport is **raw s16le datagrams, one 20 ms block each, no header** — so `ffplay`/ffmpeg/`rff` play a device with no receiver code. Sequence numbers and timestamps come with `janus/media/1` over iroh (N-track), not here. |
+| 2026-09-01 | `Element::output_format` replaces a static `format()`: elements may change rate, channels or encoding, and the pipeline sizes its two scratch halves from `max_output_bytes`. `RingBuffer` is single-owner (a mutex or a task split wraps it per track). |

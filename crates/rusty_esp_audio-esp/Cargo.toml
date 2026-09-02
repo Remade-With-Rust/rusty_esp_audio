@@ -1,6 +1,6 @@
 [package]
 name = "rusty_esp_audio-esp"
-description = "Chip backends for rusty_esp_audio: the WRAP crate. `esp-hal` (Track B, no_std + Embassy) or `esp-idf` (Track A, std on ESP-IDF). The only crate in the workspace allowed a fenced unsafe block, and only at a DMA or FFI boundary."
+description = "Chip backends for rusty_esp_audio: the WRAP crate. `std` gives the Track A transport (raw PCM over UDP, WAV files) that runs on the host unchanged; `esp-idf` adds the PDM/I2S capture over esp-idf-hal; `esp-hal` is Track B. The only crate in the workspace allowed a fenced unsafe block, and only at a DMA or FFI boundary."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -11,21 +11,38 @@ rust-version.workspace = true
 readme = "README.md"
 documentation = "https://docs.rs/rusty_esp_audio-esp"
 keywords = ["esp32", "embedded", "esp-hal", "esp-idf", "remade-with-rust"]
-categories = ["embedded", "no-std", "hardware-support"]
+categories = ["embedded", "no-std", "multimedia::audio"]
 
 [features]
 default = []
+# `std` brings the Track A transport (`net`, `wavfile`): std::net sockets
+# carrying raw PCM datagrams a player reads directly, and WAV files. The same
+# code runs on the host and on ESP-IDF.
 std = ["rusty_esp_audio-core/std"]
 alloc = ["rusty_esp_audio-core/alloc"]
-# Track B — bare metal: esp-hal + Embassy. The esp-hal / esp-radio / esp-alloc
-# dependencies land behind this feature with the first driver, pinned to the
-# versions recorded in the plan.
+# Track A — std on ESP-IDF: `idf::PdmIn` over esp-idf-hal's I2S PDM RX.
+esp-idf = ["std", "dep:esp-idf-hal"]
+# Track B — bare metal: esp-hal I2S/PDM lands here with its pin.
 esp-hal = ["alloc"]
-# Track A — std on ESP-IDF via esp-idf-svc. Same rule.
-esp-idf = ["std"]
 
 [dependencies]
 rusty_esp_audio-core = { workspace = true }
+esp-idf-hal = { version = "0.46", optional = true }
+
+[dev-dependencies]
+rusty_esp_core = { workspace = true, features = ["std"] }
+
+[[example]]
+name = "tone_send"
+required-features = ["std"]
+
+[[example]]
+name = "pcm_record"
+required-features = ["std"]
+
+[[test]]
+name = "audio_oracle"
+required-features = ["std"]
 
 [lints]
 workspace = true

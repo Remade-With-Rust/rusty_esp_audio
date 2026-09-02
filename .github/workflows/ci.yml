@@ -32,8 +32,11 @@ jobs:
         with:
           components: clippy, rustfmt
       - run: cargo fmt --all --check
-      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo clippy --workspace --all-targets --features rusty_esp_audio-esp/std -- -D warnings
       - run: cargo test --workspace
+      # The Track A transport and the external oracles (ffmpeg/ffprobe/scipy
+      # when present; each skips loudly when not).
+      - run: cargo test -p rusty_esp_audio-esp --features std
 
   no_std:
     name: no_std (${{ matrix.target }})

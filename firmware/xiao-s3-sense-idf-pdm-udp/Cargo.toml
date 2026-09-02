@@ -1,0 +1,58 @@
+# Janus J2 firmware — XIAO ESP32-S3 Sense, Track A (std on ESP-IDF):
+# PDM microphone → DC block → energy VAD → raw s16le PCM over UDP.
+#
+# A separate cargo project on purpose (Xtensa target, ESP-IDF build, its own
+# toolchain). Build from this directory. See README.md for the kill test.
+
+[package]
+name = "xiao-s3-sense-idf-pdm-udp"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+license = "MIT OR Apache-2.0"
+publish = false
+description = "Janus J2: XIAO ESP32-S3 Sense PDM microphone to raw PCM over UDP (ESP-IDF track)."
+
+[[bin]]
+name = "xiao-s3-sense-idf-pdm-udp"
+harness = false # no cargo test harness on the chip
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+
+[profile.dev]
+debug = true
+opt-level = "z"
+lto = true
+codegen-units = 1
+
+[features]
+default = ["std", "esp-idf-svc/native"]
+std = ["alloc", "esp-idf-svc/binstart", "esp-idf-svc/std"]
+alloc = ["esp-idf-svc/alloc"]
+
+[dependencies]
+log = "0.4"
+anyhow = "1"
+esp-idf-svc = { version = "0.52", default-features = false }
+
+# Janus crates. Siblings by git URL (the umbrella's .cargo/config.toml patches
+# them to local checkouts); this repo's own crates by path.
+rusty_esp_core = { git = "https://github.com/Remade-With-Rust/rusty_esp_core", default-features = false, features = ["std"] }
+rusty_esp_audio-core = { path = "../../crates/rusty_esp_audio-core", default-features = false, features = ["std"] }
+rusty_esp_audio-esp = { path = "../../crates/rusty_esp_audio-esp", default-features = false, features = ["esp-idf"] }
+
+[build-dependencies]
+embuild = "0.33"
+
+[package.metadata.esp-idf-sys]
+# ESP-IDF v5.5 line, the one n0's iroh-on-ESP32 examples and esp-idf-svc 0.52 target.
+esp_idf_version = "v5.5.1"
+esp_idf_tools_install_dir = "global"
+
+# A standalone cargo project: not a member of the rusty_esp_audio workspace
+# (cargo needs this table, a glob in workspace.exclude does not match).
+[workspace]

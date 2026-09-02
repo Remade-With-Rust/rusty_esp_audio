@@ -19,8 +19,30 @@ plan. "Scaffold" means scaffold.
 
 ## Status
 
-**M0 — scaffold.** Crate layout, feature ladder and CI gates exist. Nothing here
-runs on a chip yet. The first milestone with a kill test is listed in the plan.
+**A0 shipped on the host (2026-09-01); A1's host half done.** The fixed-block
+pipeline, its elements and the PCM/ADPCM/WAV codecs pass 45 unit tests plus 6
+external-oracle tests: IMA ADPCM is **byte-identical to ffmpeg in both
+directions**, PCM conversions byte-identical to swresample, biquads within
+1 LSB of ffmpeg and scipy. The Track A transport (raw PCM over UDP that
+`ffplay` reads directly, WAV files ffprobe reads), the PDM backend and the
+XIAO ESP32-S3 Sense firmware are written, and the firmware **builds**
+(986,688 B image, 64 % of the factory partition). Nothing has run on a chip
+yet; `docs/LEDGER.md` has every number.
+
+## What is in it
+
+| module | what |
+|---|---|
+| `Element`, `Pipeline<N>` | ESP-ADF's element/pipeline: fixed blocks over two halves of one caller scratch buffer, zero heap |
+| `RingBuffer` | whole-frame ring with drop counter and high-water mark |
+| `elements` | `Gain`, `DcBlock`, `Biquad` (RBJ low/high/peak/notch), `Agc`, `EnergyVad`, mono↔stereo, `mix_i16`, `LinearResampler`, `Convert` |
+| `codec::pcm` | I16 ↔ I24In32 ↔ I32 ↔ F32 with ffmpeg's rules |
+| `codec::adpcm_ima` | IMA ADPCM encoder/decoder in the WAV block layout |
+| `codec::wav` | RIFF/WAVE headers (PCM, float, IMA), write and parse |
+| `-esp` `net` (`std`) | `UdpPcmSender` / `UdpPcmReceiver`: raw s16le datagrams, `ffplay -f s16le -ar 16000 -ch_layout mono -i udp://0.0.0.0:5004` |
+| `-esp` `wavfile` (`std`) | `WavWriter` (an `AudioSink`), `read_all` |
+| `-esp` `idf::PdmIn` | Track A PDM microphone over esp-idf-hal 0.46 |
+| examples | `tone_send` (a fake device), `pcm_record` (the Pi record path) |
 
 ## What it is
 
