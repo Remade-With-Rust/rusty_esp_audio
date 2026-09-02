@@ -17,5 +17,10 @@ build-std = ["std", "panic_abort"]
 CARGO_WORKSPACE_DIR = { value = "", relative = true }
 MCU = "esp32s3"
 ESP_IDF_VERSION = "v5.5.1"
+# Belt to the manifest's braces: esp-idf-sys reads env before cargo metadata,
+# so even when its `cargo metadata --locked` fails (it does on a fresh lockfile
+# and after a profile change reruns the build script) the IDF stays in the
+# global dir instead of being cloned into this project.
+ESP_IDF_TOOLS_INSTALL_DIR = "global"
 # Keeps `cc` from injecting host defaults into the cross build.
 CRATE_CC_NO_DEFAULTS = "1"
