@@ -37,6 +37,8 @@ jobs:
       # The Track A transport and the external oracles (ffmpeg/ffprobe/scipy
       # when present; each skips loudly when not).
       - run: cargo test -p rusty_esp_audio-esp --features std
+      # FLAC through rusty_flac (its no-std branch, by git) and its ffmpeg oracle.
+      - run: cargo test -p rusty_esp_audio-esp --features std,flac
 
   no_std:
     name: no_std (${{ matrix.target }})
@@ -58,3 +60,4 @@ jobs:
           targets: ${{ matrix.target }}
       - run: cargo check -p rusty_esp_audio-core --no-default-features --target ${{ matrix.target }}
       - run: cargo check -p rusty_esp_audio-core --no-default-features --features alloc --target ${{ matrix.target }}
+      - run: cargo check -p rusty_esp_audio-core --no-default-features --features alloc,flac --target ${{ matrix.target }}

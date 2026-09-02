@@ -26,8 +26,10 @@ directions**, PCM conversions byte-identical to swresample, biquads within
 1 LSB of ffmpeg and scipy. The Track A transport (raw PCM over UDP that
 `ffplay` reads directly, WAV files ffprobe reads), the PDM backend and the
 XIAO ESP32-S3 Sense firmware are written, and the firmware **builds**
-(986,688 B image, 64 % of the factory partition). Nothing has run on a chip
-yet; `docs/LEDGER.md` has every number.
+(986,688 B image, 64 % of the factory partition). FLAC is in behind the
+`flac` feature: `rusty_flac` went `no_std` upstream (PR #8) and our chunks
+decode in ffmpeg to the exact source PCM. Nothing has run on a chip yet;
+`docs/LEDGER.md` has every number.
 
 ## What is in it
 
@@ -39,6 +41,7 @@ yet; `docs/LEDGER.md` has every number.
 | `codec::pcm` | I16 ↔ I24In32 ↔ I32 ↔ F32 with ffmpeg's rules |
 | `codec::adpcm_ima` | IMA ADPCM encoder/decoder in the WAV block layout |
 | `codec::wav` | RIFF/WAVE headers (PCM, float, IMA), write and parse |
+| `codec::flac` (feature `flac`) | chunked FLAC streams through the house `rusty_flac` (`no-std` branch); ffmpeg decodes them to the exact source |
 | `-esp` `net` (`std`) | `UdpPcmSender` / `UdpPcmReceiver`: raw s16le datagrams, `ffplay -f s16le -ar 16000 -ch_layout mono -i udp://0.0.0.0:5004` |
 | `-esp` `wavfile` (`std`) | `WavWriter` (an `AudioSink`), `read_all` |
 | `-esp` `idf::PdmIn` | Track A PDM microphone over esp-idf-hal 0.46 |

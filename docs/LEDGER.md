@@ -81,6 +81,24 @@ below −40 dB.
 | `StereoToMono` / `MonoToStereo` / `mix_i16` | floor average, byte-exact duplication, saturating sum |
 | `RingBuffer` | wrap, drop counting on full (`Busy`), overwrite of oldest, high-water mark |
 
+### FLAC through `rusty_flac` (feature `flac`), against ffmpeg
+
+`rusty_flac` on its `no-std` branch (PR #8: `no_std` + `alloc`, `libm`
+feature for deterministic math), through `codec::flac::FlacEncoder`: 2 s
+chunks of the tone-plus-noise signal, 20 ms blocks pushed one at a time.
+
+| chunk | PCM → FLAC | ffmpeg decode == source | our decode == source | two encodes identical | ffprobe |
+|---|---:|---|---|---|---|
+| mono, level 5 | 64 000 B → 52 503 B (82.0 %) | **byte-identical** | byte-identical | yes | `flac,16000,1,32000` |
+| stereo, level 8 | 128 000 B → 110 348 B (86.2 %) | **byte-identical** | byte-identical | yes | `flac,16000,2,32000` |
+
+The ratios are poor because the test signal is a third noise by amplitude;
+FLAC is lossless and this is what noise costs. `riscv32imac` check with
+`--features alloc,flac`: green. `rff` was not run (not built on this machine);
+ffmpeg is the stronger oracle anyway. This is the host half of the J2 FLAC
+kill test; the chip half (a chunk from the board byte-identical to the host
+encoder's, both with `libm`) needs the board.
+
 ## First Track A firmware build (2026-09-01)
 
 `firmware/xiao-s3-sense-idf-pdm-udp` (`PdmIn` → `Pipeline[DcBlock]` →

@@ -627,3 +627,81 @@ fn recorder_writes_a_wav_ffprobe_reads() {
     assert_eq!(line, "pcm_s16le,16000,1,8000", "ffprobe: {text}");
     eprintln!("recorder: ffprobe reads the WAV as {line}");
 }
+
+/// The FLAC half of the J2 kill test, on the host: chunks from
+/// `codec::flac` decode in ffmpeg to the exact source PCM, our own decoder
+/// agrees, and the same samples give the same bytes twice.
+#[cfg(feature = "flac")]
+#[test]
+fn flac_chunks_decode_in_ffmpeg_to_the_source_pcm() {
+    use rusty_esp_audio_core::codec::flac::{FlacEncoder, decode_pcm16};
+    if !have("ffmpeg", &["-version"]) {
+        return;
+    }
+    for (channels, level) in [(1u8, 5u32), (2, 8)] {
+        let f = PcmFormat::new(16_000, channels, SampleFormat::I16).unwrap();
+        let pcm = signal(32_000, channels as usize); // 2 s
+        let mut enc = FlacEncoder::new(f, level).unwrap();
+        let block = 640 * channels as usize;
+        for chunk in pcm.chunks_exact(block) {
+            enc.push(PcmBlock::new(f, Micros::ZERO, chunk).unwrap())
+                .unwrap();
+        }
+        let stream = enc.finish().unwrap();
+        let path = tmp(&format!("chunk{channels}.flac"));
+        std::fs::write(&path, &stream).unwrap();
+        let raw = tmp(&format!("chunk{channels}.raw"));
+        ffmpeg(&[
+            "-i",
+            path.to_str().unwrap(),
+            "-f",
+            "s16le",
+            raw.to_str().unwrap(),
+        ]);
+        let ff = std::fs::read(&raw).unwrap();
+        assert_eq!(
+            first_mismatch(&ff, &pcm),
+            None,
+            "ffmpeg decode of our FLAC ({channels} ch) is not the source PCM"
+        );
+        let (back_f, ours) = decode_pcm16(&stream).unwrap();
+        assert_eq!(back_f, f);
+        assert_eq!(ours, pcm);
+        let mut again = FlacEncoder::new(f, level).unwrap();
+        for chunk in pcm.chunks_exact(block) {
+            again
+                .push(PcmBlock::new(f, Micros::ZERO, chunk).unwrap())
+                .unwrap();
+        }
+        assert_eq!(
+            again.finish().unwrap(),
+            stream,
+            "encoder is not deterministic"
+        );
+        let probe = Command::new("ffprobe")
+            .args([
+                "-v",
+                "error",
+                "-show_entries",
+                "stream=codec_name,sample_rate,channels,duration_ts",
+                "-of",
+                "csv=p=0",
+            ])
+            .arg(&path)
+            .output()
+            .unwrap();
+        let text = String::from_utf8_lossy(&probe.stdout);
+        let line = text.lines().next().unwrap_or("").trim().to_string();
+        assert_eq!(
+            line,
+            format!("flac,16000,{channels},32000"),
+            "ffprobe: {text}"
+        );
+        eprintln!(
+            "flac ({channels} ch, level {level}): {} B of PCM → {} B FLAC ({:.1} %), ffmpeg decodes it to the source exactly, deterministic; ffprobe: {line}",
+            pcm.len(),
+            stream.len(),
+            100.0 * stream.len() as f64 / pcm.len() as f64
+        );
+    }
+}

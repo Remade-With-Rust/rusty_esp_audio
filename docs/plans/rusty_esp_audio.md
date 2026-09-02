@@ -51,7 +51,8 @@ pub mod elements { Gain (Q15), DcBlock, Biquad (LowPass|HighPass|Peak|Notch, RBJ
                    MonoToStereo, StereoToMono, mix_i16, LinearResampler (exact rational phase), Convert }
 pub mod codec    { pcm (I16<->I24In32<->I32<->F32, ffmpeg rules), adpcm_ima (Encoder/Decoder, WAV layout),
                    wav (WavHeader write/parse: PCM, float, IMA) }
-// Still to come: chip::{Register, CodecChip, es8311, es7210, es8388} at A2; flac at A3.
+pub mod codec::flac (feature "flac", implies alloc) { FlacEncoder (chunked streams), encode_pcm16, decode_pcm16 } // the one allocating module
+// Still to come: chip::{Register, CodecChip, es8311, es7210, es8388} at A2.
 ```
 
 Every element takes interleaved i16 (the stateful ones up to 2 channels);
@@ -76,7 +77,7 @@ stated tolerance, byte-identical for ADPCM/FLAC/format conversion).
 
 | Need | Use | Status / work item |
 |---|---|---|
-| FLAC | `rusty_flac` 0.1.2 | zero deps, zero features, slice-in/caller-buffer-out API, no threads — **the closest codec to `no_std` in the portfolio**. Upstream PR: feature ladder, `core::fmt` errors, gate 13 `target_arch` sites. First codec on the chip. |
+| FLAC | `rusty_flac` `no-std` branch ([PR #8](https://github.com/Remade-With-Rust/rusty_flac/pull/8), 2026-09-01) | **Done upstream:** `no_std` + `alloc` behind the `std` feature, optional pure-Rust `libm` for deterministic host/chip math, thread-local scratch and AVX2 behind `std`, riscv32/thumbv7 in its CI. Still needs `alloc` (the encoder buffers its stream). Janus depends on the branch by git until it is released; the umbrella patches it to `../rusty_flac`. `codec::flac` wraps it behind the `flac` feature. |
 | Opus | `rusty-opus` 0.9.1 | 245 `unsafe`, 248 `target_arch`, thread pool: a libopus transpile. **Not viable on-chip short term.** Decision gate at A4: port, or transcode on the host. |
 | Host playback | `rff` (`wav`, `flac`, `udp://` TS) | PCM/WAV over UDP first; the Pi hub records it |
 | Never | ADF's C codecs, `esp_audio_codec`'s AAC | the host has `rff` |
@@ -88,7 +89,7 @@ stated tolerance, byte-identical for ADPCM/FLAC/format conversion).
 | **A0** ✅ 2026-09-01 | elements, `RingBuffer`, `Pipeline`, `adpcm_ima`, `wav`, format conversions, host tests with synthetic PCM (recorded-speech fixtures still to add) | **passed:** biquads within 1 LSB of ffmpeg (f64 DF1) and scipy `lfilter`; IMA ADPCM **byte-identical to ffmpeg in both directions** (mono and stereo), PCM conversions byte-identical to swresample; AGC/VAD/DC-block/resampler property tests; riscv32 both rungs green; 45 + 3 + 6 tests. `docs/LEDGER.md` |
 | **A1** (J2) ◐ host half 2026-09-01 | PDM mic on XIAO S3 Sense (Track A) → `DcBlock` → `EnergyVad` → raw s16le PCM over UDP to a laptop or the Pi. **Done on the host:** `net::{UdpPcmSender, UdpPcmReceiver}` (ffmpeg reads the datagrams straight off the socket), `wavfile::WavWriter` + `pcm_record` (ffprobe-verified), `tone_send`, `idf::PdmIn` over esp-idf-hal, the firmware project `firmware/xiao-s3-sense-idf-pdm-udp` **builds** for xtensa-esp32s3-espidf (ESP-IDF v5.5.1; 986,688 B image, 64 % of the 1.5 MiB factory partition) | the laptop plays camera + mic together; 10 minutes with the drop counter recorded — **needs the board** |
 | **A2** | ES8311 + ES7210 on Korvo-2 / S3-EYE; speaker out; loopback | mic → gain → speaker loopback with a measured latency; register tables re-derived and attributed |
-| **A3** | `rusty_flac` `no_std` → FLAC blocks on-chip | on-chip FLAC bytes identical to the host encoder for the same PCM; decodes in `rff` |
+| **A3** ◐ host half 2026-09-01 | `rusty_flac` `no_std` → FLAC blocks on-chip. **Done on the host:** the upstream `no_std` change (PR #8), `codec::flac::FlacEncoder` chunked streams, ffmpeg decodes them to the exact source PCM, encoder deterministic (`docs/LEDGER.md`) | on-chip FLAC bytes identical to the host encoder for the same PCM (both with `libm`); decodes in `rff` — **needs the board** |
 | **A4** | Opus decision gate: measure `rusty-opus` scalar CELT on S3 vs budget | a ledger row with cycles/frame; go/no-go recorded |
 | **A5** | Track B I2S/PDM via esp-hal; PIE twins for `Biquad`/`dot_i16` via `rusty_esp_dsp` | byte-identical to scalar; ceiling probe first |
 
@@ -118,4 +119,6 @@ stated tolerance, byte-identical for ADPCM/FLAC/format conversion).
 | 2026-09-01 | ESP-SR is remade as a **lite** front end (VAD/AGC/DC block); wake word and AEC are non-goals for v1; ASR/TTS live in FFAI on the host. |
 | 2026-09-01 | IMA ADPCM: the decoder is the IMA reference expansion (what ffmpeg and every player decode with); the encoder tracks the decoder by default (closed loop) and offers `ffmpeg_compatible()` for byte parity with `adpcm_ima_wav`, whose encoder uses a different prediction rule than its own decoder. Found by the oracle, not by reading. |
 | 2026-09-01 | A1 transport is **raw s16le datagrams, one 20 ms block each, no header** — so `ffplay`/ffmpeg/`rff` play a device with no receiver code. Sequence numbers and timestamps come with `janus/media/1` over iroh (N-track), not here. |
+| 2026-09-01 | FLAC on the chip is **chunked standalone streams** (push blocks, `finish` → one complete FLAC stream per second or two), not a single long stream: each chunk is independently decodable by any player and survives a lost datagram. `codec::flac` is the one allocating module in the core, behind `flac` ⊃ `alloc`, and says so. |
+| 2026-09-01 | `rusty_flac` math goes through its `libm` feature on both host and chip so the J2 kill test (host bytes == chip bytes) is decidable; the default `std` build keeps its published bytes. |
 | 2026-09-01 | `Element::output_format` replaces a static `format()`: elements may change rate, channels or encoding, and the pipeline sizes its two scratch halves from `max_output_bytes`. `RingBuffer` is single-owner (a mutex or a task split wraps it per track). |

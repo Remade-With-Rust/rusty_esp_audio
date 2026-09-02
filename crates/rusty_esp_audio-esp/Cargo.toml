@@ -20,6 +20,8 @@ default = []
 # code runs on the host and on ESP-IDF.
 std = ["rusty_esp_audio-core/std"]
 alloc = ["rusty_esp_audio-core/alloc"]
+# FLAC chunks through the core's `codec::flac` (adds its oracle test).
+flac = ["alloc", "rusty_esp_audio-core/flac"]
 # Track A — std on ESP-IDF: `idf::PdmIn` over esp-idf-hal's I2S PDM RX.
 esp-idf = ["std", "dep:esp-idf-hal"]
 # Track B — bare metal: esp-hal I2S/PDM lands here with its pin.
