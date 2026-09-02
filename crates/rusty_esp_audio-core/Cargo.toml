@@ -26,7 +26,7 @@ flac = ["alloc", "dep:rusty_flac"]
 [dependencies]
 rusty_esp_core = { workspace = true }
 # The `no-std` branch until it is released to crates.io (Janus plan A3).
-rusty_flac = { git = "https://github.com/Remade-With-Rust/rusty_flac", branch = "no-std", default-features = false, features = ["libm"], optional = true }
+rusty_flac = { version = "0.1", git = "https://github.com/Remade-With-Rust/rusty_flac", branch = "no-std", default-features = false, features = ["libm"], optional = true }
 # Pure-Rust libm for the handful of transcendentals (filter design, dB
 # conversions, the test tone). Deterministic on host and chip; no_std; no deps.
 libm = { version = "0.2", default-features = false }
