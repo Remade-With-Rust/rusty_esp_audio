@@ -49,11 +49,13 @@ of the 1.5 MiB factory partition `partitions_singleapp_large.csv` gives an
 8 MB part; 27 s to rebuild once the IDF is configured. Numbers and sections
 in `rusty_esp_audio/docs/LEDGER.md`. Not flashed yet.
 
-Two things the first build taught (mission plan §8): run
-`cargo generate-lockfile` once before the very first `cargo build` of a
-fresh firmware project, or esp-idf-sys silently falls back to its defaults
-and clones a second IDF into `.embuild/`; and `git config --global
-core.longpaths true` before the IDF submodules land under `~/.espressif`.
+Two things the first build taught (mission plan §8): before building run
+`cargo metadata --filter-platform=xtensa-esp32s3-espidf --format-version 1 >/dev/null`
+once in this directory (unused umbrella `[patch]` rows otherwise make
+esp-idf-sys's `cargo metadata --locked` fail and it silently ignores the
+manifest; `.cargo/config.toml` pins the tools dir so it can at least never
+clone an IDF into the project); and `git config --global core.longpaths true`
+before the IDF submodules land under `~/.espressif`.
 
 ## Notes
 
