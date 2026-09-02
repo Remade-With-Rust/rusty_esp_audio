@@ -628,6 +628,106 @@ fn recorder_writes_a_wav_ffprobe_reads() {
     eprintln!("recorder: ffprobe reads the WAV as {line}");
 }
 
+/// Recorded speech through the VAD and AGC, against ffmpeg's `silencedetect`.
+///
+/// Set `JANUS_SPEECH_WAV` to any speech recording (it is normalised to 16 kHz
+/// mono s16le by ffmpeg first). Nothing is vendored; the ledger records the
+/// run on this machine. Skips when the variable is unset.
+#[test]
+fn recorded_speech_vad_agrees_with_ffmpeg_silencedetect() {
+    use rusty_esp_audio_core::elements::{Agc, EnergyVad, VadConfig};
+    use rusty_esp_audio_core::rms_dbfs_i16;
+    let Some(src) = std::env::var_os("JANUS_SPEECH_WAV") else {
+        eprintln!("JANUS_SPEECH_WAV not set; recorded-speech oracle skipped");
+        return;
+    };
+    if !have("ffmpeg", &["-version"]) {
+        return;
+    }
+    let raw = tmp("speech16k.raw");
+    ffmpeg(&[
+        "-i",
+        src.to_str().unwrap(),
+        "-ar",
+        "16000",
+        "-ac",
+        "1",
+        "-f",
+        "s16le",
+        raw.to_str().unwrap(),
+    ]);
+    let pcm = std::fs::read(&raw).unwrap();
+    let f = PcmFormat::PCM16_16K_MONO;
+    let total_secs = pcm.len() as f64 / 32_000.0;
+
+    // ffmpeg's view: silence below -45 dB lasting at least 200 ms.
+    let out = Command::new("ffmpeg")
+        .args([
+            "-hide_banner",
+            "-nostats",
+            "-f",
+            "s16le",
+            "-ar",
+            "16000",
+            "-ac",
+            "1",
+            "-i",
+        ])
+        .arg(&raw)
+        .args(["-af", "silencedetect=noise=-45dB:d=0.2", "-f", "null", "-"])
+        .output()
+        .unwrap();
+    let log = String::from_utf8_lossy(&out.stderr);
+    let mut silence_secs = 0.0f64;
+    let mut segments = 0usize;
+    for line in log.lines() {
+        if let Some(pos) = line.find("silence_duration: ") {
+            let v: f64 = line[pos + 18..].trim().parse().unwrap_or(0.0);
+            silence_secs += v;
+            segments += 1;
+        }
+    }
+    let ff_speech_fraction = 1.0 - silence_secs / total_secs;
+
+    // Ours: the same threshold, 200 ms of hangover, 20 ms blocks.
+    let mut vad = EnergyVad::new(VadConfig {
+        threshold_dbfs: -45.0,
+        hangover_blocks: 10,
+        gate: false,
+    });
+    let mut agc = Agc::default();
+    let mut out_buf = [0u8; 640];
+    let mut speech_levels = Vec::new();
+    for block in pcm.chunks_exact(640) {
+        let blk = PcmBlock::new(f, Micros::ZERO, block).unwrap();
+        vad.process(blk, &mut out_buf).unwrap();
+        agc.process(blk, &mut out_buf).unwrap();
+        if vad.is_speech() {
+            speech_levels.push(rms_dbfs_i16(&out_buf));
+        }
+    }
+    let our_speech_fraction = vad.speech_blocks as f64 / vad.blocks as f64;
+    speech_levels.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let median = speech_levels[speech_levels.len() / 2];
+    let p90 = speech_levels[speech_levels.len() * 9 / 10];
+    eprintln!(
+        "recorded speech ({total_secs:.1} s): ffmpeg silencedetect {segments} silences, speech fraction {ff_speech_fraction:.3}; \
+         EnergyVad speech fraction {our_speech_fraction:.3} ({}/{} blocks); AGC speech-block level median {median:.1} / p90 {p90:.1} dBFS (target -20)",
+        vad.speech_blocks, vad.blocks
+    );
+    assert!(
+        (our_speech_fraction - ff_speech_fraction).abs() <= 0.10,
+        "VAD disagrees with ffmpeg by more than 10 points"
+    );
+    // The AGC's slow release (6 dB/s) needs a few seconds to settle, and it
+    // holds the LOUD blocks at the target: per-block speech levels swing
+    // 20 dB, so the median sits under it by design. Judge the p90 on clips
+    // long enough to have settled.
+    if total_secs >= 6.0 {
+        assert!((-24.0..=-14.0).contains(&p90), "AGC p90 {p90} dBFS");
+    }
+}
+
 /// The FLAC half of the J2 kill test, on the host: chunks from
 /// `codec::flac` decode in ffmpeg to the exact source PCM, our own decoder
 /// agrees, and the same samples give the same bytes twice.

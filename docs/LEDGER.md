@@ -69,6 +69,26 @@ below −40 dB.
 | `UdpPcmReceiver` → `WavWriter` → `ffprobe` | **pass**: `pcm_s16le,16000,1,8000` for 25 datagrams / 16 000 bytes |
 | loopback: 640-byte block → 3 datagrams at a 301-byte ceiling; 3 840-byte stereo block → 4 datagrams at 1 200 | pass |
 
+### VAD and AGC on recorded speech, against ffmpeg `silencedetect`
+
+`tests/audio_oracle.rs::recorded_speech_vad_agrees_with_ffmpeg_silencedetect`
+takes any recording through `JANUS_SPEECH_WAV` (ffmpeg normalises it to
+16 kHz mono first; nothing is vendored). ffmpeg's `silencedetect=noise=-45dB:d=0.2`
+gives the reference speech fraction; ours is `EnergyVad` at −45 dBFS with a
+200 ms hangover over 20 ms blocks; the AGC runs the voice defaults from 0 dB.
+
+| clip (local, FFai bench fixtures) | ffmpeg speech fraction | `EnergyVad` | AGC speech-block level, median / p90 |
+|---|---:|---:|---:|
+| real speech, 9.1 s (mistral.rs `sample_speech.wav`, 44.1 k) | 0.973 | 0.998 (452/453) | −25.9 / **−20.0** dBFS |
+| espeak Harvard sentence `hvd-01-01`, 2.2 s (22.05 k) | 1.000 | 0.972 (106/109) | −28.2 / **−20.0** dBFS |
+| espeak Harvard sentence `hvd-02-06`, 2.0 s (22.05 k) | 1.000 | 0.970 (98/101) | −28.4 / **−20.0** dBFS |
+
+The VAD agrees with ffmpeg within 3 points on every clip. The AGC holds the
+loud blocks (p90) at the target to within 0.05 dB on every clip; the median
+sits 6–8 dB under it because per-block speech levels swing 20 dB and the
+release is a deliberate 6 dB/s — on the 2 s clips it has not finished
+settling, which is why the test judges p90 only on clips of 6 s or more.
+
 ### Elements measured by property tests
 
 | element | measured |
@@ -128,5 +148,5 @@ path limit checking out IDF submodules under `~/.espressif`.
   the VAD ratio over ten minutes need the board (A1).
 - `LinearResampler` aliasing (it is linear interpolation; a sinc resampler is
   a later element when a rate change matters for quality).
-- `Agc`/`EnergyVad` on recorded speech (the property tests use tones).
+- `Agc`/`EnergyVad` on a *corpus* of speech (three clips so far, above).
 - FLAC on the chip (A3, waits on `rusty_flac` `no_std`); Opus (A4 gate).

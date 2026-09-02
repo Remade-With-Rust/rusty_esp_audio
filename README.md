@@ -23,7 +23,8 @@ plan. "Scaffold" means scaffold.
 pipeline, its elements and the PCM/ADPCM/WAV codecs pass 45 unit tests plus 6
 external-oracle tests: IMA ADPCM is **byte-identical to ffmpeg in both
 directions**, PCM conversions byte-identical to swresample, biquads within
-1 LSB of ffmpeg and scipy. The Track A transport (raw PCM over UDP that
+1 LSB of ffmpeg and scipy, the VAD within 3 points of ffmpeg's
+`silencedetect` on recorded speech. The Track A transport (raw PCM over UDP that
 `ffplay` reads directly, WAV files ffprobe reads), the PDM backend and the
 XIAO ESP32-S3 Sense firmware are written, and the firmware **builds**
 (986,688 B image, 64 % of the factory partition). FLAC is in behind the
