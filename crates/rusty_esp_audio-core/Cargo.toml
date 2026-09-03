@@ -26,6 +26,8 @@ flac = ["alloc", "dep:rusty_flac"]
 [dependencies]
 rusty_esp_core = { workspace = true }
 rusty_esp_dsp = { workspace = true }
+# The I2C trait the codec chips ride on. 1.0 is the stable embedded-hal; no_std.
+embedded-hal = "1.0"
 # The `no-std` branch until it is released to crates.io (Janus plan A3).
 rusty_flac = { version = "0.1", git = "https://github.com/Remade-With-Rust/rusty_flac", branch = "no-std", default-features = false, features = ["libm"], optional = true }
 # Pure-Rust libm for the handful of transcendentals (filter design, dB

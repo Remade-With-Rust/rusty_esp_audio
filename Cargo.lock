@@ -1010,6 +1010,7 @@ dependencies = [
 name = "rusty_esp_audio-core"
 version = "0.1.0"
 dependencies = [
+ "embedded-hal 1.0.0",
  "libm",
  "rusty_esp_core",
  "rusty_esp_dsp",

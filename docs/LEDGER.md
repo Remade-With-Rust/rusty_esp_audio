@@ -150,3 +150,20 @@ path limit checking out IDF submodules under `~/.espressif`.
   a later element when a rate change matters for quality).
 - `Agc`/`EnergyVad` on a *corpus* of speech (three clips so far, above).
 - FLAC on the chip (A3, waits on `rusty_flac` `no_std`); Opus (A4 gate).
+
+## A2 host half: codec chips as data (host, 2026-09-02)
+
+| Gate | Result |
+|---|---|
+| ES8311 bring-up (`Config::slave(16_000)`) against a fake I²C bus: the 28 register writes of Espressif's `es8311_codec_init` in its order with its values, including the 16 kHz / 4.096 MHz clock row expanded through the driver's arithmetic | **pass** |
+| ES8311 master mode, MCLK from BCLK, both clocks inverted, PDM mic at 8 kHz: the bits the driver sets (`REG00` 0xC0, `REG01` 0xFF, `REG02` multiplier ×4, `REG06` bit 5) | pass |
+| ES8311 format / width / start / stop / mute / mic gain / volume: `SDPIN`/`SDPOUT` bit fields, the start's power-up writes, the suspend sequence, `DAC_REG31` mute bits, `ADC_REG16`, the half-dB volume map (`0xBF` = 0 dB, `0x5B` = −50 dB as the vendor comment says) | pass |
+| ES8311 unsupported (MCLK, rate) pair refused before any write; chip id read from `REGFD/REGFE` | pass |
+| ES7210 bring-up (`Config::slave(16_000)`): the vendor `es7210_adc_init` head verbatim, then mic select (inputs 1 + 2 powered, PGA on at 24 dB, ADC12 clocks on, no TDM) | pass |
+| ES7210 four mics in master mode from the doubler: TDM on, every PGA at 30 dB, both ADC pairs powered | pass |
+| ES7210 format / width / start / stop / mute; `Module::Dac` refused (no DAC); the clock register the stop replaces with `0x7F` restored by the next start | pass |
+| Clock tables: 75 ES8311 rows and 25 ES7210 rows, every row's dividers in range | pass |
+
+Unit tests: **55 pass** in the core (9 of them for `chip`), esp 3 + 7 oracle
+unchanged; clippy `-D warnings`, `riscv32imac` no_std check, `cargo deny`.
+No latency number: the loopback needs the board.

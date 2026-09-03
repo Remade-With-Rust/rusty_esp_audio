@@ -27,12 +27,14 @@
 //! | [`pipeline`] | `Element` and `Pipeline<N>`: the fixed-block graph |
 //! | [`elements`] | gain, DC block, RBJ biquads, AGC, energy VAD, channel ops, linear resampler, format conversion |
 //! | [`codec`] | `pcm` conversions, `adpcm_ima` (IMA ADPCM, WAV layout), `wav` headers |
+//! | [`chip`] | codec chips as register data over `embedded-hal` I²C: `es8311` (ADC + DAC), `es7210` (4-channel ADC) |
 
 #[cfg(feature = "alloc")]
 extern crate alloc;
 
 pub use rusty_esp_core as esp_core;
 
+pub mod chip;
 pub mod codec;
 pub mod elements;
 pub mod pipeline;

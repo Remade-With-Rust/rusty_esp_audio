@@ -32,6 +32,14 @@ XIAO ESP32-S3 Sense firmware are written, and the firmware **builds**
 decode in ffmpeg to the exact source PCM. Nothing has run on a chip yet;
 `docs/LEDGER.md` has every number.
 
+**A2's host half (2026-09-02):** the ES8311 and ES7210 codec chips exist as
+register data with their vendor sequences (bring-up, clocking for every
+MCLK/rate pair in the tables, serial-port format and width, start, stop,
+gain, mute) reproduced register for register against a fake I²C bus; the
+moved kernels the pipeline leans on (PCM conversion, the dBFS meter) come
+from `rusty_esp_dsp`. What waits for a board: the Korvo-2 / S3-EYE loopback
+and its measured latency.
+
 ## What is in it
 
 | module | what |
@@ -42,6 +50,7 @@ decode in ffmpeg to the exact source PCM. Nothing has run on a chip yet;
 | `codec::pcm` | I16 ↔ I24In32 ↔ I32 ↔ F32 with ffmpeg's rules |
 | `codec::adpcm_ima` | IMA ADPCM encoder/decoder in the WAV block layout |
 | `codec::wav` | RIFF/WAVE headers (PCM, float, IMA), write and parse |
+| `chip` | codec chips as register data over `embedded-hal` I²C: `es8311` (mono ADC + DAC; 75-row clock table, bring-up / start / stop / format / volume / mic gain), `es7210` (4-channel ADC; 25-row table, mic select, TDM, gain, mute), `I2cRegs`, `CodecChip` — re-derived from Espressif's `esp-adf` drivers and attributed; the vendor sequences reproduced register for register against a fake bus |
 | `codec::flac` (feature `flac`) | chunked FLAC streams through the house `rusty_flac` (`no-std` branch); ffmpeg decodes them to the exact source |
 | `-esp` `net` (`std`) | `UdpPcmSender` / `UdpPcmReceiver`: raw s16le datagrams, `ffplay -f s16le -ar 16000 -ch_layout mono -i udp://0.0.0.0:5004` |
 | `-esp` `wavfile` (`std`) | `WavWriter` (an `AudioSink`), `read_all` |
