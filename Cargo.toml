@@ -32,6 +32,7 @@ rusty_esp_audio-esp = { path = "crates/rusty_esp_audio-esp", version = "0.1.0", 
 # its own. Inside the Janus umbrella folder, `.cargo/config.toml` patches the
 # URL to the sibling checkout, so local edits are visible without a push.
 rusty_esp_core = { version = "0.1", git = "https://github.com/Remade-With-Rust/rusty_esp_core", default-features = false }
+rusty_esp_dsp = { version = "0.1", git = "https://github.com/Remade-With-Rust/rusty_esp_dsp", default-features = false }
 
 [profile.release]
 lto = "thin"

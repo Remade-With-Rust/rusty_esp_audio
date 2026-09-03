@@ -1012,6 +1012,7 @@ version = "0.1.0"
 dependencies = [
  "libm",
  "rusty_esp_core",
+ "rusty_esp_dsp",
  "rusty_flac",
 ]
 
@@ -1027,6 +1028,14 @@ dependencies = [
 [[package]]
 name = "rusty_esp_core"
 version = "0.1.0"
+
+[[package]]
+name = "rusty_esp_dsp"
+version = "0.1.0"
+dependencies = [
+ "libm",
+ "rusty_esp_core",
+]
 
 [[package]]
 name = "rusty_flac"

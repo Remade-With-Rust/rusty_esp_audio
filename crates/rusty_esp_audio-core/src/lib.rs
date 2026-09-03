@@ -60,25 +60,9 @@ pub mod prelude {
 /// Crate version, for capability manifests and logs.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// Level of an interleaved i16 block in dBFS (RMS over all channels).
-/// Digital silence returns `-120.0`.
-#[must_use]
-pub fn rms_dbfs_i16(samples: &[u8]) -> f32 {
-    let mut acc: i64 = 0;
-    let mut n: i64 = 0;
-    for s in samples.chunks_exact(2) {
-        let v = i64::from(i16::from_le_bytes([s[0], s[1]]));
-        acc += v * v;
-        n += 1;
-    }
-    if n == 0 || acc == 0 {
-        return -120.0;
-    }
-    // Exact in f64 up to 2^53; the final division and log are the only rounding.
-    let mean = acc as f64 / n as f64;
-    let rms = libm::sqrt(mean) / 32768.0;
-    (20.0 * libm::log10(rms)) as f32
-}
+/// Level of an interleaved i16 block in dBFS — `rusty_esp_dsp`'s reduction
+/// (moved there in D0, 2026-09-02), at the path this crate always had.
+pub use rusty_esp_dsp::sample::rms_dbfs_i16;
 
 /// Write an `i16` sample as two little-endian bytes.
 #[inline]
@@ -116,18 +100,6 @@ pub(crate) fn round_sat16(v: f32) -> i16 {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn dbfs_of_full_scale_square_is_zero() {
-        let mut buf = [0u8; 64];
-        for (i, s) in buf.chunks_exact_mut(2).enumerate() {
-            put_i16(s, if i % 2 == 0 { 32767 } else { -32767 });
-        }
-        let db = rms_dbfs_i16(&buf);
-        assert!(db.abs() < 0.001, "{db}");
-        assert_eq!(rms_dbfs_i16(&[0u8; 8]), -120.0);
-        assert_eq!(rms_dbfs_i16(&[]), -120.0);
-    }
 
     #[test]
     fn rounding_and_saturation() {
