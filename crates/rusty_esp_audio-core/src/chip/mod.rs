@@ -20,9 +20,11 @@
 //! |---|---|---|
 //! | ES8311 | mono ADC + DAC, the Korvo-2 / S3-BOX / S3-EYE speaker path | [`es8311`] |
 //! | ES7210 | four-channel ADC (mic array), the Korvo-2 / S3-EYE mic path | [`es7210`] |
+//! | ES8388 | stereo ADC + DAC with line bypass, the LyraT / Korvo-1 / S3-BOX-Lite codec | [`es8388`] |
 
 pub mod es7210;
 pub mod es8311;
+pub mod es8388;
 
 use embedded_hal::i2c::I2c;
 use rusty_esp_core::error::{Error, Result};

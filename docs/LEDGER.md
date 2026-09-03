@@ -163,8 +163,12 @@ path limit checking out IDF submodules under `~/.espressif`.
 | ES7210 four mics in master mode from the doubler: TDM on, every PGA at 30 dB, both ADC pairs powered | pass |
 | ES7210 format / width / start / stop / mute; `Module::Dac` refused (no DAC); the clock register the stop replaces with `0x7F` restored by the next start | pass |
 | Clock tables: 75 ES8311 rows and 25 ES7210 rows, every row's dividers in range | pass |
+| ES8388 bring-up (`Config::slave()`): the 30 register writes of Espressif's `es8388_init` in its order with its values, ADC volume 0 dB included | **pass** |
+| ES8388 master mode, output pair 2, microphone 1: `MASTERMODE`, `DACPOWER`, `ADCCONTROL2` | pass |
+| ES8388 start / stop: the `CHIPPOWER` state-machine pulse only when `DACCONTROL21` changes (none after init, one after a stop), ADC and DAC power, mute bit; the DAC-only start leaves the ADC down | pass |
+| ES8388 format and width on both converters, the MCLK : LRCK ratio codes (256 → 2, 384 → 3, 1500 → 27, 300 refused before any write), volume (`0x64` = −50 dB as the vendor comment says), mic PGA (24 dB → `0x88`, 10 dB refused), output and input selects, line bypass on and off with its pulse | pass |
 
-Unit tests: **55 pass** in the core (9 of them for `chip`), esp 3 + 7 oracle
+Unit tests: **58 pass** in the core (14 of them for `chip`), esp 3 + 7 oracle
 unchanged; clippy `-D warnings`, `riscv32imac` no_std check, `cargo deny`.
 No latency number: the loopback needs the board.
 
