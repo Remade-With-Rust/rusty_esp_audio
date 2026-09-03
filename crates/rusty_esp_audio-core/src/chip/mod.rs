@@ -21,8 +21,12 @@
 //! | ES8311 | mono ADC + DAC, the Korvo-2 / S3-BOX / S3-EYE speaker path | [`es8311`] |
 //! | ES7210 | four-channel ADC (mic array), the Korvo-2 / S3-EYE mic path | [`es7210`] |
 //! | ES8388 | stereo ADC + DAC with line bypass, the ESP32-LyraT codec | [`es8388`] |
+//! | ES8156 | mono DAC + headphone driver, the S3-BOX-Lite playback half | [`es8156`] |
+//! | ES7243E | stereo ADC, the S3-BOX-Lite capture half | [`es7243e`] |
 
 pub mod es7210;
+pub mod es7243e;
+pub mod es8156;
 pub mod es8311;
 pub mod es8388;
 

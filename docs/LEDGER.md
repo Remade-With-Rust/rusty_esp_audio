@@ -167,8 +167,10 @@ path limit checking out IDF submodules under `~/.espressif`.
 | ES8388 master mode, output pair 2, microphone 1: `MASTERMODE`, `DACPOWER`, `ADCCONTROL2` | pass |
 | ES8388 start / stop: the `CHIPPOWER` state-machine pulse only when `DACCONTROL21` changes (none after init, one after a stop), ADC and DAC power, mute bit; the DAC-only start leaves the ADC down | pass |
 | ES8388 format and width on both converters, the MCLK : LRCK ratio codes (256 → 2, 384 → 3, 1500 → 27, 300 refused before any write), volume (`0x64` = −50 dB as the vendor comment says), mic PGA (24 dB → `0x88`, 10 dB refused), output and input selects, line bypass on and off with its pulse | pass |
+| ES8156 (S3-BOX-Lite DAC): the 16-write bring-up, the 8-write resume and 10-write standby applied in the vendor's order; mute bits; the volume map; every framing but I²S/16-bit refused before any write; a slave's `set_sample_rate` writes nothing | pass |
+| ES7243E (S3-BOX-Lite ADC): the 37-write bring-up, 9-write start and 13-write stop applied in the vendor's order; PGA codes; DAC start, mute and other framings refused before any write | pass |
 
-Unit tests: **58 pass** in the core (14 of them for `chip`), esp 3 + 7 oracle
+Unit tests: **62 pass** in the core (18 of them for `chip`), esp 3 + 7 oracle
 unchanged; clippy `-D warnings`, `riscv32imac` no_std check, `cargo deny`.
 No latency number: the loopback needs the board.
 
