@@ -122,9 +122,36 @@ pub fn encode_pcm16(block: PcmBlock<'_>, level: u32) -> Result<Vec<u8>> {
     e.finish().ok_or(Error::InvalidGeometry)
 }
 
+/// The most samples a FLAC byte can carry: a frame header is at least six
+/// bytes and a block at most 65 535 samples, so a stream of `n` bytes cannot
+/// hold more than about `n × 11 000` samples per channel. `STREAMINFO`
+/// claiming more is corrupt, and is refused before anyone allocates for it.
+const MAX_SAMPLES_PER_BYTE: u64 = 16 * 1024;
+
+/// The `total_samples` field of a stream's `STREAMINFO`, if the stream is
+/// long enough to have one: `fLaC`, the block header, then 34 bytes of which
+/// the low nibble of byte 13 and the four bytes after it are the 36-bit
+/// count (RFC 9639 §8.2).
+fn streaminfo_total_samples(flac: &[u8]) -> Option<u64> {
+    let info = flac.get(8..42)?;
+    if &flac[..4] != b"fLaC" || flac[4] & 0x7F != 0 {
+        return None;
+    }
+    let hi = u64::from(info[13] & 0x0F);
+    let lo = u64::from(u32::from_be_bytes([info[14], info[15], info[16], info[17]]));
+    Some((hi << 32) | lo)
+}
+
 /// Decode a FLAC stream to interleaved i16 little-endian PCM. Streams that
-/// are not 16-bit are refused (`Unsupported`); corrupt ones are `Corrupt`.
+/// are not 16-bit are refused (`Unsupported`); corrupt ones are `Corrupt`,
+/// including a header whose sample count no stream of that length could
+/// hold (the decoder reserves memory from that count; a lie there must not
+/// become an allocation).
 pub fn decode_pcm16(flac: &[u8]) -> Result<(PcmFormat, Vec<u8>)> {
+    let claimed = streaminfo_total_samples(flac).ok_or(Error::Corrupt)?;
+    if claimed > flac.len() as u64 * MAX_SAMPLES_PER_BYTE {
+        return Err(Error::Corrupt);
+    }
     let (info, planes) = rusty_flac::decode(flac).map_err(|_| Error::Corrupt)?;
     if info.bits_per_sample != 16 || info.channels == 0 || info.channels > 8 {
         return Err(Error::Unsupported);

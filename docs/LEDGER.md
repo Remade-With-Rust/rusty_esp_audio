@@ -167,3 +167,16 @@ path limit checking out IDF submodules under `~/.espressif`.
 Unit tests: **55 pass** in the core (9 of them for `chip`), esp 3 + 7 oracle
 unchanged; clippy `-D warnings`, `riscv32imac` no_std check, `cargo deny`.
 No latency number: the loopback needs the board.
+
+## The no-panic gate (host, 2026-09-02)
+
+Every parser that takes bytes from a wire, a store or a bus must return an
+error on bad input, never panic — the house rule made a test:
+`tests/no_panic.rs` feeds each one random inputs from an LCG (the same corpus
+on every machine) and mutations of a valid encoding (bit flips, overwrites,
+truncation, extension, insertion, removal), under `catch_unwind` so a failure
+names the parser and prints the input.
+
+| covered | result |
+|---|---|
+| `WavHeader::parse` (40 000: random and mutations of a valid PCM16 header), `adpcm_ima::Decoder::decode_block` (20 000 blocks across channel and block-size combinations), `flac::decode_pcm16` (4 000, `--features flac`) | **one finding, guarded and filed:** a 42-byte FLAC header claiming billions of samples made `rusty_flac::decode` reserve ~80 GB from `STREAMINFO.total_samples` and abort the process (not a panic — an allocation failure); `decode_pcm16` now refuses a count no stream of that length could hold before calling the decoder, and the decoder's own allocation is [rusty_flac#9](https://github.com/Remade-With-Rust/rusty_flac/issues/9) |
