@@ -1,5 +1,5 @@
 //! ES8388 — Everest's stereo ADC + DAC with line-in bypass, the codec on the
-//! ESP32-LyraT, the Korvo-1 and the S3-BOX-Lite.
+//! ESP32-LyraT (v4.2 / v4.3) and the boards that copied it.
 //!
 //! Register map and every sequence are re-derived from Espressif's `esp-adf`
 //! `components/audio_hal/driver/es8388/{es8388.h, es8388.c}` and the shared

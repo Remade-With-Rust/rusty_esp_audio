@@ -50,7 +50,7 @@ and its measured latency.
 | `codec::pcm` | I16 ↔ I24In32 ↔ I32 ↔ F32 with ffmpeg's rules |
 | `codec::adpcm_ima` | IMA ADPCM encoder/decoder in the WAV block layout |
 | `codec::wav` | RIFF/WAVE headers (PCM, float, IMA), write and parse |
-| `chip` | codec chips as register data over `embedded-hal` I²C: `es8311` (mono ADC + DAC; 75-row clock table, bring-up / start / stop / format / volume / mic gain), `es7210` (4-channel ADC; 25-row table, mic select, TDM, gain, mute), `es8388` (stereo ADC + DAC with line bypass; the LyraT / Korvo-1 / S3-BOX-Lite codec: MCLK ratio codes, outputs, inputs, mic PGA, volume), `I2cRegs`, `CodecChip` — re-derived from Espressif's `esp-adf` drivers and attributed; the vendor sequences reproduced register for register against a fake bus |
+| `chip` | codec chips as register data over `embedded-hal` I²C: `es8311` (mono ADC + DAC; 75-row clock table, bring-up / start / stop / format / volume / mic gain), `es7210` (4-channel ADC; 25-row table, mic select, TDM, gain, mute), `es8388` (stereo ADC + DAC with line bypass; the ESP32-LyraT codec: MCLK ratio codes, outputs, inputs, mic PGA, volume), `I2cRegs`, `CodecChip` — re-derived from Espressif's `esp-adf` drivers and attributed; the vendor sequences reproduced register for register against a fake bus |
 | `codec::flac` (feature `flac`) | chunked FLAC streams through the house `rusty_flac` (`no-std` branch); ffmpeg decodes them to the exact source |
 | `-esp` `net` (`std`) | `UdpPcmSender` / `UdpPcmReceiver`: raw s16le datagrams, `ffplay -f s16le -ar 16000 -ch_layout mono -i udp://0.0.0.0:5004` |
 | `-esp` `wavfile` (`std`) | `WavWriter` (an `AudioSink`), `read_all` |
