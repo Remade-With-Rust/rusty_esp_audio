@@ -18,10 +18,31 @@ refuses long output paths), so set `CARGO_TARGET_DIR` to something like
 the target dir then sits outside the project, `.cargo/config.toml` pins
 `CARGO_WORKSPACE_DIR` so esp-idf-sys still reads this manifest.
 
-## Build, flash, listen
+## Two modes, chosen at build time
+
+With a destination compiled in it streams; with none it measures. The arm is
+picked by `option_env!`, so it is the same source either way and the first
+line of the log says which ran.
 
 ```sh
-export CARGO_TARGET_DIR=C:/janus-a                 # Windows only
+export CARGO_TARGET_DIR=C:/janus-s3                # Windows only
+```
+
+**Bench (no network needed).** Nothing to set. No Wi-Fi is started at all,
+which is what lets this row be answered on a bench with no access point, and
+also means nothing contends for the CPU while the microphone is timed.
+
+```sh
+export JANUS_MIC_SECS=600                          # optional, default 10
+cargo build --release
+espino flash   --board xiao-esp32s3-sense --port COM4 --app $CARGO_TARGET_DIR/xtensa-esp32s3-espidf/release/xiao-s3-sense-idf-pdm-udp
+espino monitor --board xiao-esp32s3-sense --port COM4 --expect "== DONE ==" --timeout 800 > soak.txt
+python tools/decode-wav-dump.py soak.txt mic.wav   # ffprobe and ffmpeg judge it
+```
+
+**Stream (the J2 demo).**
+
+```sh
 export JANUS_WIFI_SSID=yournet JANUS_WIFI_PASS=yourpass
 export JANUS_AUDIO_DEST=192.168.1.20:5004          # the laptop or Pi
 cargo build --release
@@ -42,12 +63,24 @@ The laptop plays the camera (J1, `http://<ip>/stream`) and the microphone
 together; ten minutes on serial with the block count, the dropped-datagram
 count and the VAD speech ratio. Numbers go to `rusty_esp_audio/docs/LEDGER.md`.
 
-## Build status
+## Status: run on the board, 2026-09-06
+
+Ten minutes on a XIAO ESP32-S3 Sense: **30 000 blocks, 50.000 per second,
+16 000.0 samples per second against a nominal 16 000**, and zero short reads,
+read errors or dropped blocks. The audio clock and the system clock agree to
+**0.52 ppm** over the ten minutes. ffprobe reads the dumped capture back as
+16 kHz mono s16le, and ffmpeg's level agrees with the decoder script's to
+0.03 dB.
+
+The VAD speech ratio was 0.469 over ten seconds and 0.235 over ten minutes in
+the same room: a short capture measures the minute it was taken in, not the
+room. Rows and method lines in `rusty_esp_audio/docs/LEDGER.md`.
+
+Still open on A1: dropped datagrams, which needs a network.
 
 Builds on 2026-09-01 against ESP-IDF v5.5.1: a 986,688-byte app image, 64 %
 of the 1.5 MiB factory partition `partitions_singleapp_large.csv` gives an
-8 MB part; 27 s to rebuild once the IDF is configured. Numbers and sections
-in `rusty_esp_audio/docs/LEDGER.md`. Not flashed yet.
+8 MB part; 27 s to rebuild once the IDF is configured.
 
 Two things the first build taught (mission plan §8): before building run
 `cargo metadata --filter-platform=xtensa-esp32s3-espidf --format-version 1 >/dev/null`

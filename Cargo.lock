@@ -1041,6 +1041,7 @@ dependencies = [
 [[package]]
 name = "rusty_flac"
 version = "0.1.2"
+source = "git+https://github.com/Remade-With-Rust/rusty_flac?branch=no-std#71a00949fa714fef748fd63f04659a31a3f82bb0"
 dependencies = [
  "libm",
 ]

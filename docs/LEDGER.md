@@ -135,8 +135,9 @@ this Windows box (esp toolchain from `espup`, cargo 1.97 nightly):
 | static DRAM (`.dram0.data` + `.dram0.bss`) | 20,744 B + 17,000 B |
 | rebuild after the IDF is configured (Rust crates + link) | 27 s |
 
-No PSRAM configured (audio does not need it). Not measured: RAM at run time,
-blocks per second, dropped datagrams, the VAD ratio — all need the board.
+No PSRAM configured (audio does not need it). Not measured at the time: RAM
+at run time, blocks per second, dropped datagrams, the VAD ratio — all needed
+the board. All but the dropped datagrams were measured on 2026-09-06, below.
 The first build attempt exposed two more Windows walls (mission plan §8):
 the fresh project had no `Cargo.lock` yet, so esp-idf-sys fell back to its
 defaults and cloned a second IDF into the project; and git hit the 260-char
@@ -144,8 +145,9 @@ path limit checking out IDF submodules under `~/.espressif`.
 
 ## Not yet measured
 
-- **Anything running on a chip.** Blocks per second, dropped datagrams and
-  the VAD ratio over ten minutes need the board (A1).
+- **Dropped datagrams (A1).** The only part of that row still open: it needs
+  a network, and this bench has no 2.4 GHz access point. Blocks per second and
+  the VAD ratio over ten minutes were measured on the board on 2026-09-06.
 - `LinearResampler` aliasing (it is linear interpolation; a sinc resampler is
   a later element when a rate change matters for quality).
 - `Agc`/`EnergyVad` on a *corpus* of speech (three clips so far, above).
@@ -186,3 +188,81 @@ names the parser and prints the input.
 | covered | result |
 |---|---|
 | `WavHeader::parse` (40 000: random and mutations of a valid PCM16 header), `adpcm_ima::Decoder::decode_block` (20 000 blocks across channel and block-size combinations), `flac::decode_pcm16` (4 000, `--features flac`) | **one finding, guarded and filed:** a 42-byte FLAC header claiming billions of samples made `rusty_flac::decode` reserve ~80 GB from `STREAMINFO.total_samples` and abort the process (not a panic — an allocation failure); `decode_pcm16` now refuses a count no stream of that length could hold before calling the decoder, and the decoder's own allocation is [rusty_flac#9](https://github.com/Remade-With-Rust/rusty_flac/issues/9) |
+
+## A1 on the board: the microphone against the chip's own clock (2026-09-06)
+
+`firmware/xiao-s3-sense-idf-pdm-udp` on a Seeed XIAO ESP32-S3 Sense, PDM
+microphone (CLK 42, DATA 41) through `PdmIn` → `Pipeline[DcBlock]` →
+`EnergyVad`, 16 kHz mono i16, 20 ms blocks.
+
+**The radio is off.** The firmware's network arm is now compile-time optional
+(`option_env!` on the SSID, password and destination); with none set it
+starts no Wi-Fi at all. That was done so this bench could answer the row
+without an access point, and it turned out to be the better measurement
+anyway: nothing else is contending for the CPU while the microphone is timed.
+
+Method line: `board=xiao-esp32s3-sense radio=off opt-level=s metric=in-process-us
+block=640B/20ms warmup=1-block-discarded work=blocks-and-samples-counted
+passes=2-separate`. Two passes, never one loop: the rate pass writes nothing
+to the console, so the block rate is the microphone's and not the serial
+link's, and the dump is a second pass whose timing is irrelevant
+(codec-measurement 13).
+
+| quantity | 10 s | **10 min (the row's soak)** |
+|---|---:|---:|
+| blocks | 501 | **30 000** |
+| samples | 160 320 | 9 600 000 |
+| elapsed | 10 020 324 us | 600 000 313 us |
+| blocks per second | 49.998 | **50.000** |
+| samples per second | 15 999.5 | **16 000.0** |
+| measured / nominal rate | 0.99997 | **1.00000** |
+| `short_reads` | 0 | **0** |
+| read errors | 0 | **0** |
+| pipeline empty | 0 | **0** |
+| level, min to max | -67.6 to -33.2 dBFS | -70.0 to -32.7 dBFS |
+| VAD speech ratio at -45 dBFS | 0.469 | **0.235** |
+
+### The soak's own result: no drift and no drops in ten minutes
+
+30 000 blocks of 640 bytes is 9 600 000 samples, which at a nominal 16 kHz is
+exactly 600.000 s of audio. The wall clock measured 600.000313 s. **The audio
+clock and the system clock agree to 0.52 parts per million over ten minutes**,
+and not one block was short, errored or dropped along the way. A ten-second
+run cannot see any of that; this is what the row wanted the ten minutes for.
+
+### And a reason the row wanted them that the row did not say
+
+**The VAD ratio halved between the two windows** — 0.469 over ten seconds,
+0.235 over ten minutes, in the same room at the same threshold. The short
+window is not a noisy estimate of the long one, it is a different quantity:
+ten seconds is comfortably inside the length of a single conversational
+event, so it measures whatever was happening at that moment. Any VAD figure
+quoted from a short capture is about the minute it was taken in. Nothing in
+the pipeline changed between the two runs.
+
+### The oracle
+
+`tools/decode-wav-dump.py` reassembles a two-second capture from the serial
+dump into a WAV and hands it to ffprobe and ffmpeg. A WAV rather than raw PCM
+on purpose: the rate and channel count travel in the file, so ffprobe reads
+back what the firmware **claimed** instead of being told it on the command
+line, which a raw-PCM oracle cannot do.
+
+| check | 10 s run | 10 min run |
+|---|---|---|
+| ffprobe geometry | pcm_s16le 16000 Hz mono, 2.000000 s | same |
+| peak, computed here / ffmpeg | -33.68 / -33.70 dBFS | -40.40 / -40.40 dBFS |
+| RMS, computed here / ffmpeg | -46.78 / -46.80 dBFS | -51.67 / -51.70 dBFS |
+| distinct sample values | 925 | 584 |
+
+The two level columns are the control arm: this script's arithmetic and
+ffmpeg's `volumedetect` agree to 0.03 dB, so the numbers are the file's and
+not the script's. The distinct-value count is the check that matters most
+cheaply — a microphone returning zeros, or a stuck bit, passes every
+structural test ever written and fails this one.
+
+### What is still open
+
+Dropped datagrams, which is the rest of the A1 row and needs a network. The
+block rate above is what the microphone produces; the datagram loss is a
+property of the transport under it, and neither substitutes for the other.
