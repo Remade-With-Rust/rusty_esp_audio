@@ -291,3 +291,33 @@ the board's 12.0 is not a loss figure. The runner now counts PCM from the
 datagrams themselves, like RTP: no decoder, no buffer, no media-time
 timeout. The board's side is unchanged: **12.0 blocks/s, dropped 0**. The
 row closes on the next trip.
+
+## A1 dropped datagrams, closed: PCM unicast for ten minutes over the board's own AP (2026-09-11)
+
+The porch-cam sketch's `stream::pcm_to` to the laptop's lease
+(`192.168.71.2:5006`, unicast) for 600 s, the laptop counting datagrams
+from the wire — a raw UDP reader, no decoder, no media clock — with the
+board's `TxStats` beside it. Method line: `sender=pcm_to(unicast:5006)
+client=killer-be200-802.11n-95% listen=600s metric=raw-udp-datagrams
+self_metric=board-TxStats`.
+
+| | laptop | board |
+|---|---:|---:|
+| datagrams | **7,201** in 600 s | 7,200 expected at its 12.0/s |
+| datagrams/s | **12.002** | 12.0 |
+| bytes per datagram | 668 | 668.0 (9,615,860 / 14,395) |
+| dropped at the sender | — | **0** |
+| **loss** | **0 of 7,201** (one more received than the rate predicts: the window's edge) | |
+
+**Zero dropped datagrams**, unicast, at 95 % signal, for the ten minutes the
+row asks. The listen began after the runner had re-associated past the AP's
+600-s group-key rekey (espino ledger), so it is a clean window.
+
+Two facts to carry. The datagram is **668 bytes, not the 640 of a 20 ms
+block**: 640 of audio plus a 28-byte prefix the facade's raw sender adds —
+the runner's "blocks = bytes / 640" line is therefore wrong and the datagram
+count is the number; the prefix's format is to be documented beside the
+sender. And the rate is **12.0 blocks/s against a microphone producing 50**:
+the sketch's loop is camera-paced and reads one block per frame, so three
+quarters of the audio is discarded at the source. The datagram row is
+closed; the pacing brick is open, and it is the sketch's, not the radio's.
