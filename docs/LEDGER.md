@@ -278,3 +278,16 @@ microphone producing 50, because the sketch's loop is camera-paced and reads
 one block per frame. That is a source-side loss of three quarters of the
 audio, before any radio — a pacing brick in the sketch, recorded here so the
 datagram row is not mistaken for it when it is measured.
+
+## A1, second trip: PCM reaches the laptop; the count is still not a count (2026-09-11)
+
+PCM **arrived**: 819 blocks in 87 s before the receiver was killed. Why it
+was killed is the finding. ffmpeg's `-t 60` is 60 s of *audio*, and the
+board sends 12 blocks of 20 ms a second — 240 ms of audio per wall second —
+so sixty seconds of audio is 250 s of wall; the pass overran its deadline
+and died mid-buffer at exactly 524,288 bytes, a 512 KiB boundary. 819 is
+therefore a lower bound with an unflushed tail, and 9.45 blocks/s against
+the board's 12.0 is not a loss figure. The runner now counts PCM from the
+datagrams themselves, like RTP: no decoder, no buffer, no media-time
+timeout. The board's side is unchanged: **12.0 blocks/s, dropped 0**. The
+row closes on the next trip.
