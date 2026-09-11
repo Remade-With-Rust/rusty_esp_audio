@@ -266,3 +266,15 @@ structural test ever written and fails this one.
 Dropped datagrams, which is the rest of the A1 row and needs a network. The
 block rate above is what the microphone produces; the datagram loss is a
 property of the transport under it, and neither substitutes for the other.
+
+## A1 on the XIAO, from the porch-cam trip: not closed, and two facts (2026-09-11)
+
+The dropped-datagram half of A1 stays open: the laptop received **0** PCM
+blocks because it had lost the access point before the PCM listen began (the
+600-s group-key rekey; espino ledger). Two things the trip did establish:
+the board's PCM sender reports **`dropped: 0`** over 7,950 blocks, so
+nothing is lost on the sending side; and it sends **12.0 blocks/s** against a
+microphone producing 50, because the sketch's loop is camera-paced and reads
+one block per frame. That is a source-side loss of three quarters of the
+audio, before any radio — a pacing brick in the sketch, recorded here so the
+datagram row is not mistaken for it when it is measured.
