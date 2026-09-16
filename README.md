@@ -1,109 +1,100 @@
 # rusty_esp_audio
 
-[![crates.io](https://img.shields.io/crates/v/rusty_esp_audio.svg)](https://crates.io/crates/rusty_esp_audio)
-[![docs.rs](https://docs.rs/rusty_esp_audio/badge.svg)](https://docs.rs/rusty_esp_audio)
-[![license](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
+[![Remade With Rust](https://img.shields.io/badge/Remade%20With-Rust-000?logo=rust&logoColor=fff)](https://github.com/remade-with-rust) [![By Mata Network](https://img.shields.io/badge/by-Mata%20Network-5b2be0)](https://www.mata.network) [![crates.io](https://img.shields.io/crates/v/rusty_esp_audio.svg)](https://crates.io/crates/rusty_esp_audio) [![docs.rs](https://docs.rs/rusty_esp_audio/badge.svg)](https://docs.rs/rusty_esp_audio) [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)](https://github.com/Remade-With-Rust/rusty_esp_audio/blob/main/LICENSE-MIT)
 
-ESP-ADF / ESP-GMF / esp_codec_dev remade in Rust: I2S/PDM capture and playback, a fixed-block audio pipeline, codec-chip drivers, Opus/FLAC/ADPCM framing via the Remade codecs. Memory safe, no_std core.
+Audio on an ESP32: a PDM microphone, WAV and FLAC writing, ADPCM, resampling,
+voice activity detection, and raw PCM over the network. Pure Rust, no C, no
+FFI, `no_std` by default. Every codec path is gated **byte-identical against
+FFmpeg**, in both directions.
 
-Part of **Janus**, the Remade-With-Rust programme that rebuilds the Espressif
-ESP32 and Arduino application portfolio in memory-safe Rust so hardware makers
-can ship products that plug straight into the MATA home computer.
+* **Byte-identical, both ways.** Our decoder over FFmpeg's blocks equals
+  FFmpeg's own decode; FFmpeg's decode of our WAV equals ours. Not close —
+  identical.
+* **FLAC that FFmpeg reads.** Mono at level 5 compresses 64,000 bytes to 52,503
+  (82.0%), stereo at level 8 to 110,348 of 128,000 (86.2%), each decoding
+  byte-identically and probing as the format it claims to be.
+* **Resampling with exact counts**, not approximate ones: 48 kHz to 16 kHz of
+  480 frames gives exactly 160; 44.1 kHz to 16 kHz over a hundred blocks lands
+  within one sample of the ideal.
+* **A microphone that keeps time.** Ten minutes on the chip: **30,000 blocks,
+  none short, dropped or errored**, at 50.000 blocks per second against a
+  nominal 50.
 
-- This package's plan: [docs/plans/rusty_esp_audio.md](docs/plans/rusty_esp_audio.md)
-- The family plan: Janus `docs/plans/janus-mission.md` (umbrella repo)
+## What has run on hardware
 
-**Claims discipline:** this README makes no performance or capability claim that
-is not backed by a test, a benchmark ledger entry, or a kill test recorded in the
-plan. "Scaffold" means scaffold.
-
-## Status
-
-**A0 shipped on the host (2026-09-01); A1's host half done.** The fixed-block
-pipeline, its elements and the PCM/ADPCM/WAV codecs pass 45 unit tests plus 6
-external-oracle tests: IMA ADPCM is **byte-identical to ffmpeg in both
-directions**, PCM conversions byte-identical to swresample, biquads within
-1 LSB of ffmpeg and scipy, the VAD within 3 points of ffmpeg's
-`silencedetect` on recorded speech. The Track A transport (raw PCM over UDP that
-`ffplay` reads directly, WAV files ffprobe reads), the PDM backend and the
-XIAO ESP32-S3 Sense firmware are written, and the firmware **builds**
-(986,688 B image, 64 % of the factory partition). FLAC is in behind the
-`flac` feature: `rusty_flac` went `no_std` upstream (PR #8) and our chunks
-decode in ffmpeg to the exact source PCM. Nothing has run on a chip yet;
-`docs/LEDGER.md` has every number.
-
-**A2's host half (2026-09-02):** the ES8311, ES7210, ES8388, ES8156 and ES7243E codec chips exist as
-register data with their vendor sequences (bring-up, clocking for every
-MCLK/rate pair in the tables, serial-port format and width, start, stop,
-gain, mute) reproduced register for register against a fake I²C bus; the
-moved kernels the pipeline leans on (PCM conversion, the dBFS meter) come
-from `rusty_esp_dsp`. What waits for a board: the Korvo-2 / S3-EYE loopback
-and its measured latency.
-
-## What is in it
-
-| module | what |
+| what | measured |
 |---|---|
-| `Element`, `Pipeline<N>` | ESP-ADF's element/pipeline: fixed blocks over two halves of one caller scratch buffer, zero heap |
-| `RingBuffer` | whole-frame ring with drop counter and high-water mark |
-| `elements` | `Gain`, `DcBlock`, `Biquad` (RBJ low/high/peak/notch), `Agc`, `EnergyVad`, mono↔stereo, `mix_i16`, `LinearResampler`, `Convert` |
-| `codec::pcm` | I16 ↔ I24In32 ↔ I32 ↔ F32 with ffmpeg's rules |
-| `codec::adpcm_ima` | IMA ADPCM encoder/decoder in the WAV block layout |
-| `codec::wav` | RIFF/WAVE headers (PCM, float, IMA), write and parse |
-| `chip` | codec chips as register data over `embedded-hal` I²C: `es8311` (mono ADC + DAC; 75-row clock table, bring-up / start / stop / format / volume / mic gain), `es7210` (4-channel ADC; 25-row table, mic select, TDM, gain, mute), `es8388` (stereo ADC + DAC with line bypass; the ESP32-LyraT codec: MCLK ratio codes, outputs, inputs, mic PGA, volume), `es8156` + `es7243e` (the S3-BOX-Lite's DAC and ADC: the vendor's bring-up, start and stop as tables, the volume map, and refusals for every framing the vendor never configured), `I2cRegs`, `CodecChip` — re-derived from Espressif's `esp-adf` drivers and attributed; the vendor sequences reproduced register for register against a fake bus |
-| `codec::flac` (feature `flac`) | chunked FLAC streams through the house `rusty_flac` (`no-std` branch); ffmpeg decodes them to the exact source |
-| `-esp` `net` (`std`) | `UdpPcmSender` / `UdpPcmReceiver`: raw s16le datagrams, `ffplay -f s16le -ar 16000 -ch_layout mono -i udp://0.0.0.0:5004` |
-| `-esp` `wavfile` (`std`) | `WavWriter` (an `AudioSink`), `read_all` |
-| `-esp` `idf::PdmIn` | Track A PDM microphone over esp-idf-hal 0.46 |
-| examples | `tone_send` (a fake device), `pcm_record` (the Pi record path) |
+| a ten-minute soak | **30,000 blocks, none lost**, 50.000 per second |
+| the audio clock against the system clock | **0.52 parts per million** apart over ten minutes |
+| audio over the network, ten minutes | **7,201 datagrams, none lost**, at the rate the board sent |
+| the speech ratio, short window against long | **0.469 falling to 0.235** — the same room, the same threshold, nothing changed but the duration |
 
-## What it is
+That last row is why the soak was worth running. Ten seconds sits comfortably
+inside a single conversation, so a short capture does not estimate a room — it
+measures the minute it was taken in. Any figure of that kind quoted from a
+brief recording describes something narrower than it appears to.
 
-- A pure-Rust remake of the *application* layer Espressif ships in C for this
-  function. Same job, same protocols and file formats, new code, permissive
-  licence, `forbid(unsafe)` in the core.
-- Track-agnostic: the core crate is `no_std + alloc` and knows nothing about
-  ESP-IDF or `esp-hal`. Backends are thin and feature-gated.
+**A known gap, measured and recorded:** the generated sketch's loop is paced by
+its camera and reads one audio block per frame, so it sends twelve blocks a
+second from a microphone producing fifty. Three quarters of the audio is
+discarded at the source before any radio is involved.
 
-## What it is not
+Every number, with the run that produced it:
+[`docs/LEDGER.md`](https://github.com/Remade-With-Rust/rusty_esp_audio/blob/main/docs/LEDGER.md).
 
-- Not a rewrite of the radio PHY, the ROM, or Espressif's Wi-Fi/BT controller
-  blob. Where the silicon must be touched, the `-esp` crate **wraps** the
-  esp-rs HAL or ESP-IDF and says so.
-- Not a fork of esp-hal, esp-radio, espflash or ESP-IDF. Those are dependencies.
+## Using it
 
-## Layout
+```rust
+use rusty_esp_audio::prelude::*;
 
-```text
-crates/rusty_esp_audio          facade: re-exports + prelude; the crate you depend on
-crates/rusty_esp_audio-core     no_std + alloc; forbid(unsafe); types, traits, algorithms
-crates/rusty_esp_audio-esp      the WRAP crate: `esp-hal` (Track B) | `esp-idf` (Track A)
-firmware/                per-chip example projects, excluded from the workspace
-docs/plans/              the mission plan for this package
+let mut mic = PdmIn::new(pins, PcmFormat::mono(16_000))?;
+while let Some(block) = mic.read()? {     // borrowed, frame-aligned by construction
+    if vad.speaking(&block) {
+        wav.write(&block)?;               // or flac, or adpcm, or straight to UDP
+    }
+}
 ```
 
-## Two tracks, one core
+## Two tracks
 
-| Track | Feature | Runtime | Use when |
-|---|---|---|---|
-| **A** | `esp-idf` | `std` on ESP-IDF (FreeRTOS) | you need iroh, TLS, or a driver ESP-IDF has and esp-hal lacks |
-| **B** | `esp-hal` | `no_std` + Embassy | the purity path; every driver upstream in esp-rs |
+| track | what it is | this crate |
+|---|---|---|
+| **A** | `std` on ESP-IDF — the PDM driver, the sockets, the writers | `rusty_esp_audio-esp --features esp-idf` |
+| **B** | `no_std` on `esp-hal` — the codecs, the resampler, the detector | `rusty_esp_audio-core`, default |
 
-The core compiles on both and on the host, which is where its tests run.
+## Part of Janus
 
-## Build
+**Janus** rebuilds the Espressif ESP32 and Arduino application portfolio as
+independent, memory-safe Rust packages — so a hardware maker can ship a device
+that the [MATA](https://www.mata.network) home computer discovers, catalogs honestly, adopts
+under its own identity, and pays for. Ten packages, three layers, and the
+dependency direction never reverses.
 
-```sh
-cargo test --workspace                                   # host: the tests
-cargo check -p rusty_esp_audio-core --no-default-features \
-  --target riscv32imac-unknown-none-elf                  # ESP32-C6 class, no alloc
-cargo check -p rusty_esp_audio-core --no-default-features --features alloc \
-  --target riscv32imac-unknown-none-elf
-```
+| layer | packages |
+|---|---|
+| **0 — the vocabulary** | [`rusty_esp_core`](https://crates.io/crates/rusty_esp_core) · [`rusty_esp_dsp`](https://crates.io/crates/rusty_esp_dsp) |
+| **1 — the functions** | [`rusty_esp_image`](https://crates.io/crates/rusty_esp_image) · [`rusty_esp_video`](https://crates.io/crates/rusty_esp_video) · [`rusty_esp_audio`](https://crates.io/crates/rusty_esp_audio) · [`rusty_esp_signal`](https://crates.io/crates/rusty_esp_signal) · [`rusty_esp_mid`](https://crates.io/crates/rusty_esp_mid) · [`rusty_esp_iroh`](https://crates.io/crates/rusty_esp_iroh) |
+| **2 — the surfaces** | [`rusty_esp_arduino`](https://crates.io/crates/rusty_esp_arduino) — the sketch facade · [`espino`](https://crates.io/crates/espino) — the maker's CLI |
 
-Firmware examples (Xtensa needs `espup`; RISC-V works on stable) are built from
-their own directories under `firmware/`.
+Every package is host-verified against an external oracle and keeps a ledger
+in which no number appears without the run that produced it. **Five of seven
+device profiles have now run their kill tests on real silicon**, three of them
+over a Wi-Fi network the board hosts itself.
+
+Also check out the rest of [Remade With Rust](https://github.com/remade-with-rust) — including
+[`rusty_alloc`](https://crates.io/crates/rusty_alloc), the pure-Rust rebuild of
+mimalloc that these firmwares run on, and
+[`rusty_jpeg`](https://crates.io/crates/rusty_jpeg), the JPEG engine behind the
+camera path — and our sister project
+[remade_ffmpeg_rs](https://github.com/Remade-With-Rust/remade_ffmpeg_rs), a ground-up Rust rebuild of FFmpeg.
+
+## About Mata Network
+
+[Mata Network](https://www.mata.network) builds sovereign, self-hostable infrastructure.
+**Remade With Rust** is our open-source home for the permissively-licensed
+building blocks that work depends on.
 
 ## License
 
-MIT OR Apache-2.0, at your option.
+MIT OR Apache-2.0, at your option. See [LICENSE-MIT](https://github.com/Remade-With-Rust/rusty_esp_audio/blob/main/LICENSE-MIT)
+and [LICENSE-APACHE](https://github.com/Remade-With-Rust/rusty_esp_audio/blob/main/LICENSE-APACHE).
