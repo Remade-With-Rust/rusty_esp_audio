@@ -1,7 +1,7 @@
 //! `Agc`: block-wise automatic gain control, the lite stand-in for ESP-SR's.
 
 use rusty_esp_core::error::Result;
-use rusty_esp_core::pcm::{PcmBlock, PcmFormat};
+use rusty_esp_core::pcm::{PcmBlock, PcmFormat, as_i16, as_i16_mut};
 
 use super::{require_i16, require_room};
 use crate::pipeline::Element;
@@ -125,6 +125,22 @@ impl Element for Agc {
         let secs = input.duration_micros() as f32 / 1_000_000.0;
         self.update(level, secs);
         let lin = libm::powf(10.0, self.gain_db / 20.0);
+        // FAST ARM: native halfword loads; the byte path below is the oracle.
+        let n = input.data.len();
+        if let (Some(src), Some(dst)) = (as_i16(input.data), as_i16_mut(&mut out[..n])) {
+            let mut ci = src.chunks_exact(8);
+            let mut co = dst.chunks_exact_mut(8);
+            for (i, o) in ci.by_ref().zip(co.by_ref()) {
+                for k in 0..8 {
+                    o[k] = round_sat16(f32::from(i[k]) * lin);
+                }
+            }
+            for (i, o) in ci.remainder().iter().zip(co.into_remainder().iter_mut()) {
+                *o = round_sat16(f32::from(*i) * lin);
+            }
+            return Ok(n);
+        }
+
         // Four samples a trip. The gain is resolved once per block already;
         // what was left per sample was a dependent load-store pair wrapped in
         // loop overhead, which an in-order core cannot overlap.

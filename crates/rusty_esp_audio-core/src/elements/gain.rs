@@ -5,6 +5,8 @@ use rusty_esp_core::pcm::{PcmBlock, PcmFormat};
 
 use super::{require_i16_any, require_room};
 use crate::pipeline::Element;
+use rusty_esp_core::pcm::{as_i16, as_i16_mut};
+
 use crate::{get_i16, put_i16};
 
 /// Multiply every sample by a fixed gain.
@@ -78,6 +80,34 @@ impl Gain {
     }
 }
 
+/// `(x * g + 2^14) >> 15` over aligned samples, sixteen a trip.
+///
+/// The product is exact in `i32` here: the caller has checked
+/// `|g| <= 65 535`, and `|x| <= 32 768`, so `|x * g| <= 2^31 - 2^15` and the
+/// rounding term still fits.
+fn gain_narrow(src: &[i16], g: i32, dst: &mut [i16]) {
+    let mut ci = src.chunks_exact(16);
+    let mut co = dst.chunks_exact_mut(16);
+    for (i, o) in ci.by_ref().zip(co.by_ref()) {
+        for k in 0..16 {
+            let y = (i32::from(i[k]) * g + (1 << 14)) >> 15;
+            o[k] = y.clamp(-32768, 32767) as i16;
+        }
+    }
+    for (i, o) in ci.remainder().iter().zip(co.into_remainder().iter_mut()) {
+        let y = (i32::from(*i) * g + (1 << 14)) >> 15;
+        *o = y.clamp(-32768, 32767) as i16;
+    }
+}
+
+/// The same over the gains whose product does NOT fit `i32`.
+fn gain_wide(src: &[i16], g: i32, dst: &mut [i16]) {
+    for (i, o) in src.iter().zip(dst.iter_mut()) {
+        let y = (i64::from(*i) * i64::from(g) + (1 << 14)) >> 15;
+        *o = y.clamp(-32768, 32767) as i16;
+    }
+}
+
 impl Element for Gain {
     fn output_format(&self, input: PcmFormat) -> Result<PcmFormat> {
         require_i16_any(input)?;
@@ -91,6 +121,19 @@ impl Element for Gain {
             out[..input.data.len()].copy_from_slice(input.data);
             return Ok(input.data.len());
         }
+        // FAST ARM: native halfword loads. `as_i16` settles the alignment
+        // once per call; `None` sends a misaligned or big-endian buffer down
+        // the byte path below, which stays the oracle.
+        let n = input.data.len();
+        if let (Some(src), Some(dst)) = (as_i16(input.data), as_i16_mut(&mut out[..n])) {
+            if self.q15.unsigned_abs() < 65536 {
+                gain_narrow(src, self.q15, dst);
+            } else {
+                gain_wide(src, self.q15, dst);
+            }
+            return Ok(n);
+        }
+
         // How wide the product has to be is a property of the GAIN, which is
         // fixed for the whole call -- not of the sample. With |x| <= 32768 and
         // |g| <= 65535 the product is at most 2^31 - 2^15, so the rounding term

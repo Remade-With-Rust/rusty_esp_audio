@@ -157,6 +157,30 @@ pub fn mix_i16(a: &[u8], b: &[u8], out: &mut [u8]) -> Result<()> {
         return Err(Error::InvalidGeometry);
     }
     require_room(out, a.len())?;
+    // FAST ARM: all THREE buffers must view as samples, or none does.
+    let len = a.len();
+    if let (Some(sa), Some(sb), Some(so)) = (as_i16(a), as_i16(b), as_i16_mut(&mut out[..len]))
+    {
+        let mut ca = sa.chunks_exact(8);
+        let mut cb = sb.chunks_exact(8);
+        let mut co = so.chunks_exact_mut(8);
+        for ((x, y), o) in ca.by_ref().zip(cb.by_ref()).zip(co.by_ref()) {
+            for k in 0..8 {
+                o[k] = sat16(i32::from(x[k]) + i32::from(y[k]));
+            }
+        }
+        for ((x, y), o) in ca
+            .remainder()
+            .iter()
+            .zip(cb.remainder())
+            .zip(co.into_remainder().iter_mut())
+        {
+            *o = sat16(i32::from(*x) + i32::from(*y));
+        }
+        return Ok(());
+    }
+
+    // BYTE ARM: the oracle, and what a misaligned buffer gets.
     // Four samples a trip: the body is a load, a load, an add, a clamp and a
     // store, which is small enough that the loop overhead is a real share.
     let n = a.len();

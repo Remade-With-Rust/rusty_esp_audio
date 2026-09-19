@@ -24,7 +24,8 @@
 //! keeps holding if a corpus is ever regenerated.
 
 use rusty_esp_audio_core::elements::{
-    Biquad, BiquadKind, DcBlock, Gain, LinearResampler, MonoToStereo, StereoToMono, mix_i16,
+    Agc, Biquad, BiquadKind, DcBlock, Gain, LinearResampler, MonoToStereo, StereoToMono,
+    mix_i16,
 };
 use rusty_esp_audio_core::pipeline::Element;
 use rusty_esp_core::pcm::{PcmBlock, PcmFormat, SampleFormat};
@@ -218,54 +219,109 @@ const RESAMPLE: [u64; 6] = [
 ];
 const RESAMPLE_STEREO: u64 = 4_688_573_486_506_082_247;
 
-/// `StereoToMono` has TWO arms: a fast one over an aligned `&[i16]` view and
-/// the original byte loop, which is both the oracle and what a misaligned or
-/// big-endian buffer gets. Every ordinary buffer here is aligned, so the
-/// digests above only ever exercise the fast one. This drives BOTH, by
-/// deliberately offsetting the input and the output by one byte, and requires
-/// them to produce the same bytes.
+/// Every element that reads i16 now has TWO arms: a fast one over an aligned
+/// `&[i16]` view and the original byte loop, which is both the oracle and
+/// what a misaligned or big-endian buffer gets.
 ///
-/// Offsetting by one makes the length odd as well as the address wrong, so it
-/// exercises both reasons `as_i16` refuses.
+/// Every ordinary buffer is aligned, so the digests above only ever exercise
+/// the FAST arm. This drives BOTH, by sliding the input and the output one
+/// byte into larger buffers -- which makes the ADDRESS wrong while leaving
+/// the length valid, the reason `as_i16` refuses in practice -- and requires
+/// the two to produce identical bytes.
+fn arms_agree<E: Element + Clone>(name: &str, e: &E, f: PcmFormat, src: &[u8], outlen: usize) {
+    let mut fast = vec![0u8; outlen];
+    let a = run(&mut e.clone(), f, src, &mut fast);
+
+    let mut off_src = vec![0u8; src.len() + 1];
+    off_src[1..].copy_from_slice(src);
+    let mut off_dst = vec![0u8; outlen + 1];
+    let b = run(&mut e.clone(), f, &off_src[1..], &mut off_dst[1..]);
+
+    assert_eq!(a, b, "{name}: the arms returned different byte counts");
+    assert_eq!(
+        &fast[..a],
+        &off_dst[1..1 + b],
+        "{name}: the aligned and byte arms disagree"
+    );
+}
+
 #[test]
-fn stereo_to_mono_arms_agree_including_the_misaligned_one() {
-    // `PcmBlock::new` rejects an empty block, so start at one frame.
+fn every_two_armed_element_agrees_with_itself() {
+    let kind = BiquadKind::LowPass {
+        f0: 3000.0,
+        q: 0.7071,
+    };
     for frames in [1usize, 2, 3, 7, 8, 9, 15, 16, 17, 31, 64, 257] {
-        let src = corpus(frames, 2);
-        let n = src.len() / 2;
-        let f = fmt(2);
+        let mono = corpus(frames, 1);
+        let stereo = corpus(frames, 2);
 
-        // aligned: a fresh Vec is 2-byte aligned and the length is even
-        let mut fast = vec![0u8; n];
-        let a = run(&mut StereoToMono, f, &src, &mut fast);
+        arms_agree("StereoToMono", &StereoToMono, fmt(2), &stereo, stereo.len() / 2);
+        arms_agree("MonoToStereo", &MonoToStereo, fmt(1), &mono, mono.len() * 2);
+        // both sides of the Q15 range: the narrow arm whose product fits i32
+        // and the wide one that must stay 64-bit
+        for &q in &[1i32, 16384, 65535, 65536, 1 << 20, 65536 * 512] {
+            arms_agree("Gain", &Gain::from_q15(q), fmt(1), &mono, mono.len());
+        }
+        for ch in [1u8, 2] {
+            let d = corpus(frames, ch as usize);
+            arms_agree("DcBlock", &DcBlock::new(), fmt(ch), &d, d.len());
+            arms_agree("Biquad", &Biquad::new(kind), fmt(ch), &d, d.len());
+            arms_agree("Agc", &Agc::default(), fmt(ch), &d, d.len());
+        }
 
-        // misaligned: slide input and output one byte into larger buffers
-        let mut shifted_src = vec![0u8; src.len() + 1];
-        shifted_src[1..].copy_from_slice(&src);
-        let mut shifted_dst = vec![0u8; n + 1];
-        let b = run(
-            &mut StereoToMono,
-            f,
-            &shifted_src[1..],
-            &mut shifted_dst[1..],
-        );
+        // mix_i16 is a free function, and needs all THREE buffers to view
+        let other: Vec<u8> = mono.iter().rev().copied().collect();
+        let mut fast = vec![0u8; mono.len()];
+        mix_i16(&mono, &other, &mut fast).unwrap();
+        let mut oa = vec![0u8; mono.len() + 1];
+        let mut ob = vec![0u8; mono.len() + 1];
+        let mut oc = vec![0u8; mono.len() + 1];
+        oa[1..].copy_from_slice(&mono);
+        ob[1..].copy_from_slice(&other);
+        mix_i16(&oa[1..], &ob[1..], &mut oc[1..]).unwrap();
+        assert_eq!(fast, oc[1..], "mix_i16: the arms disagree at {frames} frames");
+    }
+}
 
-        assert_eq!(a, b, "byte counts differ at {frames} frames");
-        assert_eq!(
-            &fast[..a],
-            &shifted_dst[1..1 + b],
-            "the aligned and byte arms of StereoToMono disagree at {frames} frames"
-        );
+/// `LinearResampler`'s mono path has an aligned arm too, and its output
+/// length is not the input's -- so it needs its own two-arm check rather
+/// than `arms_agree`.
+#[test]
+fn resampler_arms_agree_including_the_misaligned_one() {
+    for (a, b) in [
+        (16_000u32, 48_000u32),
+        (48_000, 16_000),
+        (44_100, 48_000),
+        (8_000, 44_100),
+    ] {
+        let data = corpus(400, 1);
+        let f = PcmFormat::new(a, 1, SampleFormat::I16).unwrap();
+        let cap = LinearResampler::new(a, b).unwrap().max_output_frames(400) * 2;
 
-        // and both must still match the plain definition
-        let want: Vec<u8> = src
-            .chunks_exact(4)
-            .flat_map(|p| {
-                let l = i32::from(i16::from_le_bytes([p[0], p[1]]));
-                let r = i32::from(i16::from_le_bytes([p[2], p[3]]));
-                (((l + r) >> 1) as i16).to_le_bytes()
-            })
-            .collect();
-        assert_eq!(&fast[..a], &want[..], "fast arm vs the definition");
+        // aligned: fresh Vecs
+        let mut rs = LinearResampler::new(a, b).unwrap();
+        let mut fast = vec![0u8; cap];
+        let mut got = Vec::new();
+        for chunk in data.chunks(400 / 3 * 2) {
+            let n = rs.process(PcmBlock::new(f, Micros(0), chunk).unwrap(), &mut fast).unwrap();
+            got.extend_from_slice(&fast[..n]);
+        }
+
+        // misaligned: slide input and output one byte
+        let mut rs2 = LinearResampler::new(a, b).unwrap();
+        let mut off_out = vec![0u8; cap + 1];
+        let mut slow = Vec::new();
+        for chunk in data.chunks(400 / 3 * 2) {
+            let mut off_in = vec![0u8; chunk.len() + 1];
+            off_in[1..].copy_from_slice(chunk);
+            let n = rs2
+                .process(
+                    PcmBlock::new(f, Micros(0), &off_in[1..]).unwrap(),
+                    &mut off_out[1..],
+                )
+                .unwrap();
+            slow.extend_from_slice(&off_out[1..1 + n]);
+        }
+        assert_eq!(got, slow, "LinearResampler arms disagree at {a} -> {b}");
     }
 }
