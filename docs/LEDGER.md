@@ -321,3 +321,25 @@ sender. And the rate is **12.0 blocks/s against a microphone producing 50**:
 the sketch's loop is camera-paced and reads one block per frame, so three
 quarters of the audio is discarded at the source. The datagram row is
 closed; the pacing brick is open, and it is the sketch's, not the radio's.
+
+## A3: FLAC encoded on the S3 round-trips through ffmpeg (2026-09-18)
+
+The FLAC encoder ran on a XIAO ESP32-S3 and produced a stream a desktop
+decoder accepts. Method, serial only: a bench built on the `xiao-s3-probe`
+harness (Track B, esp-hal, no_std + alloc) added `rusty_esp_audio-core`
+(`flac` feature) and `rusty_flac 0.1.3` with `libm`; both compiled clean for
+`xtensa-esp32s3-none-elf`. On the chip: a deterministic 512-sample mono i16
+PCM (1,024 B) FLAC-encoded via `flac::encode_pcm16(.., level 0)` to a
+**203-byte stream**, dumped as hex over serial. The frame buffers are freed
+first — the encoder needs ~63 KB and the 196,608 B heap has no room while the
+172,800 B of pixel buffers are held (it OOM'd until they were dropped); after
+the encode 195,584 B were free again, no leak.
+
+On the laptop the hex was rebuilt into the exact 203 bytes (header `fLaC`),
+`ffmpeg` decoded it to 1,024 bytes of s16le, and those bytes **matched the
+source PCM byte-for-byte** — a lossless FLAC produced on silicon that a
+standard decoder round-trips. The host suite already checks ffmpeg round-trip
+and determinism; this adds that the encoder runs, fits and is correct on the
+chip. Speed at level 0: ~91 ms per 512-sample block (177.8 µs/sample), which
+is below real time and a place a later pass can look; correctness, memory and
+decoder-compatibility are what this row establishes.
