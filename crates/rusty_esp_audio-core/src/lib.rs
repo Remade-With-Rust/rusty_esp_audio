@@ -89,34 +89,10 @@ pub(crate) fn sat16(v: i32) -> i16 {
 /// Round an `f32` to the nearest `i16`, ties away from zero, saturating.
 #[inline]
 pub(crate) fn round_sat16(v: f32) -> i16 {
-    // `libm::roundf(x)` IS `truncf(x + copysignf(0.5 - 0.25*EPSILON, x))`, and
-    // the `as i16` below truncates toward zero as well. So the original form
-    // truncated twice: once in the float unit, then again in the cast that
-    // recomputes the same thing. Adding the bias and casting ONCE is the same
-    // i16 for every f32 -- and `round_sat16_matches_libm_exhaustively` proves
-    // that over all 2^32 bit patterns rather than sampling it.
-    //
-    // The comparisons move from `trunc(t)` to `t`, which is exact: for t >= 0,
-    // `trunc(t) >= 32767` iff `t >= 32767`, and for t <= 0, `trunc(t) <=
-    // -32768` iff `t <= -32768`. NaN fails both and casts to 0, as before.
-    // The comparisons move from `trunc(t)` to `t`, which is exact: for t >= 0,
-    // `trunc(t) >= 32767` iff `t >= 32767`, and for t <= 0, `trunc(t) <=
-    // -32768` iff `t <= -32768`. NaN fails both and casts to 0, as before.
-    //
-    // REFUTED, and reverted as measured worse: `t.clamp(-32768.0, 32767.0) as
-    // i16` is the same value for all 2^32 patterns and reads better, and it
-    // cost dc_block +12.1% and biquad +6.5% against a 0.01% null arm on an
-    // ESP32-S3 (2026-09-19). Branching to a constant beats two float selects
-    // here because the saturating cast does not fold away after `clamp` the
-    // way it does after a range-proving branch.
-    let t = v + libm::copysignf(0.5 - 0.25 * f32::EPSILON, v);
-    if t >= 32767.0 {
-        i16::MAX
-    } else if t <= -32768.0 {
-        i16::MIN
-    } else {
-        t as i16
-    }
+    // One definition, in the crate every element already speaks. See
+    // `rusty_esp_core::pcm::round_sat_i16` for why it truncates once and why
+    // its final conversion is unchecked.
+    rusty_esp_core::pcm::round_sat_i16(v)
 }
 
 #[cfg(test)]

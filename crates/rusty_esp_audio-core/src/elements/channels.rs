@@ -28,6 +28,29 @@ impl Element for MonoToStereo {
         self.output_format(input.format)?;
         let n = input.data.len() * 2;
         require_room(out, n)?;
+        // FAST ARM: one halfword load and two halfword stores per frame,
+        // where the byte path needs two loads and four stores. The byte path
+        // below stays the oracle and takes the misaligned case.
+        if let (Some(src), Some(dst)) = (as_i16(input.data), as_i16_mut(&mut out[..n])) {
+            let mut ci = src.chunks_exact(32);
+            let mut co = dst.chunks_exact_mut(64);
+            for (i, o) in ci.by_ref().zip(co.by_ref()) {
+                for k in 0..32 {
+                    o[k * 2] = i[k];
+                    o[k * 2 + 1] = i[k];
+                }
+            }
+            for (i, o) in ci
+                .remainder()
+                .iter()
+                .zip(co.into_remainder().chunks_exact_mut(2))
+            {
+                o[0] = *i;
+                o[1] = *i;
+            }
+            return Ok(n);
+        }
+
         // Four frames a trip: the body is six byte moves, so one-at-a-time
         // spends most of the loop on the counter and the two pointer bumps.
         let mut ci = input.data.chunks_exact(32);
@@ -161,11 +184,11 @@ pub fn mix_i16(a: &[u8], b: &[u8], out: &mut [u8]) -> Result<()> {
     let len = a.len();
     if let (Some(sa), Some(sb), Some(so)) = (as_i16(a), as_i16(b), as_i16_mut(&mut out[..len]))
     {
-        let mut ca = sa.chunks_exact(8);
-        let mut cb = sb.chunks_exact(8);
-        let mut co = so.chunks_exact_mut(8);
+        let mut ca = sa.chunks_exact(16);
+        let mut cb = sb.chunks_exact(16);
+        let mut co = so.chunks_exact_mut(16);
         for ((x, y), o) in ca.by_ref().zip(cb.by_ref()).zip(co.by_ref()) {
-            for k in 0..8 {
+            for k in 0..16 {
                 o[k] = sat16(i32::from(x[k]) + i32::from(y[k]));
             }
         }

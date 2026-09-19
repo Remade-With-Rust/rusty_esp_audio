@@ -86,6 +86,9 @@ impl Gain {
 /// `|g| <= 65 535`, and `|x| <= 32 768`, so `|x * g| <= 2^31 - 2^15` and the
 /// rounding term still fits.
 fn gain_narrow(src: &[i16], g: i32, dst: &mut [i16]) {
+    // SIXTEEN. Thirty-two measured +100.5% against a 0.0% null arm on an
+    // ESP32-S3 (2026-09-19) -- the SAME cliff the byte arm hits at the same
+    // width, so the register window, not the access method, is what sets it.
     let mut ci = src.chunks_exact(16);
     let mut co = dst.chunks_exact_mut(16);
     for (i, o) in ci.by_ref().zip(co.by_ref()) {

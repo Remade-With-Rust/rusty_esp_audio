@@ -22,18 +22,14 @@ fn round_sat16_ref(v: f32) -> i16 {
     }
 }
 
-/// The form that ships now. Kept here rather than imported because the real
-/// one is `pub(crate)`; if this copy and that one ever drift, the corpus gate
-/// in `element_oracle.rs` is what notices.
+/// The form that ships now.
 fn round_sat16_new(v: f32) -> i16 {
-    let t = v + libm::copysignf(0.5 - 0.25 * f32::EPSILON, v);
-    if t >= 32767.0 {
-        i16::MAX
-    } else if t <= -32768.0 {
-        i16::MIN
-    } else {
-        t as i16
-    }
+    // The SHIPPED function, not a copy. It ends in `to_int_unchecked`, whose
+    // safety rests entirely on the three tests above it -- so the sweep below
+    // is not only a correctness gate, it is the proof that the unsafe cast
+    // never sees a value it cannot represent. A copy here would prove
+    // nothing about the code that runs.
+    rusty_esp_core::pcm::round_sat_i16(v)
 }
 
 #[test]
