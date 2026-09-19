@@ -64,7 +64,7 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Level of an interleaved i16 block in dBFS — `rusty_esp_dsp`'s reduction
 /// (moved there in D0, 2026-09-02), at the path this crate always had.
-pub use rusty_esp_dsp::sample::rms_dbfs_i16;
+pub use rusty_esp_dsp::sample::{peak_abs_i16, rms_dbfs_i16};
 
 /// Write an `i16` sample as two little-endian bytes.
 #[inline]

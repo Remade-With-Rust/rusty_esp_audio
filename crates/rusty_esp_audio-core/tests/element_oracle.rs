@@ -325,3 +325,62 @@ fn resampler_arms_agree_including_the_misaligned_one() {
         assert_eq!(got, slow, "LinearResampler arms disagree at {a} -> {b}");
     }
 }
+
+/// The voice front end the PDM firmware runs: DC block, then the rumble
+/// below speech, then make-up gain. Built here so the composition is checked
+/// on the host — an ESP-IDF firmware is a slow and awkward place to discover
+/// that three stages do not fit together, or that the scratch buffer was
+/// sized for one.
+///
+/// This is also the reachability test in miniature: before the census, every
+/// element but `DcBlock` had no caller outside a `#[cfg(test)]` block.
+#[test]
+fn the_voice_front_end_composes_and_sizes_its_scratch() {
+    use rusty_esp_audio_core::elements::Agc;
+    use rusty_esp_audio_core::pipeline::Pipeline;
+
+    let f = fmt(1);
+    let data = corpus(320, 1); // 20 ms at 16 kHz
+    let mut dc = DcBlock::new();
+    let mut hp = Biquad::new(BiquadKind::HighPass {
+        f0: 80.0,
+        q: 0.7071,
+    });
+    let mut agc = Agc::default();
+    let mut pipe = Pipeline::new([
+        &mut dc as &mut dyn Element,
+        &mut hp as &mut dyn Element,
+        &mut agc as &mut dyn Element,
+    ]);
+
+    let need = pipe.scratch_bytes(f, data.len()).expect("scratch sizing");
+    assert!(
+        need >= data.len() * 2,
+        "a 3-stage i16 chain needs both halves: {need} for {} in",
+        data.len()
+    );
+    let mut scratch = vec![0u8; need];
+
+    // A short scratch must be REFUSED rather than silently truncating.
+    let mut tiny = vec![0u8; 4];
+    assert!(
+        pipe.process(
+            PcmBlock::new(f, Micros(0), &data).unwrap(),
+            &mut tiny
+        )
+        .is_err(),
+        "a 4-byte scratch must not be accepted"
+    );
+
+    // And the real thing runs, keeps the geometry, and stays finite.
+    for k in 0..8 {
+        let blk = PcmBlock::new(f, Micros(k * 20_000), &data).unwrap();
+        let out = pipe
+            .process(blk, &mut scratch)
+            .expect("pipeline")
+            .expect("a full block in is a full block out");
+        assert_eq!(out.data.len(), data.len(), "block {k} changed length");
+        assert_eq!(out.format, f, "block {k} changed format");
+    }
+    assert_eq!(pipe.blocks, 9, "one refused call plus eight good ones");
+}
