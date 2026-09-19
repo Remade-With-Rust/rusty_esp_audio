@@ -36,6 +36,14 @@ pub struct LinearResampler {
     primed: bool,
 }
 
+// REFUTED, measured worse, and removed rather than parked -- a dead struct
+// field costs RAM on a chip. `rem` is always below `out_r`, so a small
+// reduced ratio has only a handful of distinct phases (16k <-> 48k is
+// `out_r = 3`), and precomputing all of them in `new` turns two hardware
+// divides per OUTPUT FRAME into one indexed load. It measured **+3.7%** on an
+// ESP32-S3 (2026-09-19): two `quou` on a small divisor are already cheap, and
+// the indexed load plus the branch selecting it cost more than they save.
+
 /// `(rem << 32) / out_r`, the interpolation phase as Q32.
 ///
 /// A 64-bit division is a LIBCALL on a 32-bit core. `out_r` is a *reduced*
