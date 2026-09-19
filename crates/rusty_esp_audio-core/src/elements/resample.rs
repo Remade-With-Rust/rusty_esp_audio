@@ -110,9 +110,14 @@ impl Element for LinearResampler {
         // Interpolation needs frame(idx) to exist, i.e. shifted idx < in_frames.
         let end = in_frames as u64 * self.out_r;
         let mut written = 0usize;
+        // `num` only ever advances by `in_r`, so its quotient and remainder by
+        // `out_r` can be CARRIED instead of recomputed. That retires two
+        // 64-bit divisions per output frame -- and a 64-bit division on this
+        // core is a libcall, not an instruction -- for a compare and a
+        // subtract per whole input frame crossed.
+        let mut idx = (self.num / self.out_r) as usize;
+        let mut rem = self.num % self.out_r;
         while self.num < end {
-            let idx = (self.num / self.out_r) as usize;
-            let rem = self.num % self.out_r;
             let frac = (rem << 32) / self.out_r;
             for c in 0..ch {
                 let x0 = i64::from(if idx == 0 {
@@ -126,6 +131,11 @@ impl Element for LinearResampler {
             }
             written += 1;
             self.num += self.in_r;
+            rem += self.in_r;
+            while rem >= self.out_r {
+                rem -= self.out_r;
+                idx += 1;
+            }
         }
         // Carry the last frame and rebase the phase onto it.
         for c in 0..ch {

@@ -73,6 +73,46 @@ impl Element for DcBlock {
         self.retune(input.format.sample_rate_hz);
         let ch = input.format.channels as usize;
         let r = self.r;
+        // `ch` is fixed for the whole call, so resolving it once lets the state
+        // live in REGISTERS for the block. The generic form re-reads `x1[c]`
+        // and `y1[c]` out of the struct and writes them back every frame --
+        // four memory round trips a sample to carry two floats.
+        if ch == 1 {
+            let (mut x1, mut y1) = (self.x1[0], self.y1[0]);
+            for (fi, fo) in input.data.chunks_exact(2).zip(out.chunks_exact_mut(2)) {
+                let x = f32::from(get_i16(fi));
+                let y = x - x1 + r * y1;
+                x1 = x;
+                y1 = y;
+                put_i16(fo, round_sat16(y));
+            }
+            self.x1[0] = x1;
+            self.y1[0] = y1;
+            return Ok(input.data.len());
+        }
+        if ch == 2 {
+            let (mut xl, mut yl) = (self.x1[0], self.y1[0]);
+            let (mut xr, mut yr) = (self.x1[1], self.y1[1]);
+            for (fi, fo) in input.data.chunks_exact(4).zip(out.chunks_exact_mut(4)) {
+                let l = f32::from(get_i16(fi));
+                let ly = l - xl + r * yl;
+                xl = l;
+                yl = ly;
+                put_i16(fo, round_sat16(ly));
+                let rr = f32::from(get_i16(&fi[2..]));
+                let ry = rr - xr + r * yr;
+                xr = rr;
+                yr = ry;
+                put_i16(&mut fo[2..], round_sat16(ry));
+            }
+            self.x1[0] = xl;
+            self.y1[0] = yl;
+            self.x1[1] = xr;
+            self.y1[1] = yr;
+            return Ok(input.data.len());
+        }
+        // MAX_CHANNELS is 2 and `require_i16` rejects more, so nothing reaches
+        // here today; it stays as the oracle the two arms above must match.
         for (fi, fo) in input
             .data
             .chunks_exact(ch * 2)

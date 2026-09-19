@@ -5,7 +5,7 @@ use rusty_esp_core::pcm::{PcmBlock, PcmFormat};
 
 use super::{require_i16_any, require_room};
 use crate::pipeline::Element;
-use crate::{get_i16, put_i16, sat16};
+use crate::{get_i16, put_i16};
 
 /// Multiply every sample by a fixed gain.
 ///
@@ -35,6 +35,24 @@ impl Gain {
         Gain { q15 }
     }
 
+    /// A gain from a raw Q15 factor, clamped to the representable range.
+    ///
+    /// The oracle test needs to reach an exact `q15` -- including the values
+    /// either side of where the product stops fitting `i32` -- which going
+    /// through `linear` cannot promise.
+    #[must_use]
+    pub const fn from_q15(q15: i32) -> Self {
+        Gain {
+            q15: if q15 > 65536 * 512 {
+                65536 * 512
+            } else if q15 < -65536 * 512 {
+                -65536 * 512
+            } else {
+                q15
+            },
+        }
+    }
+
     /// A gain from decibels.
     #[must_use]
     pub fn from_db(db: f32) -> Self {
@@ -52,7 +70,11 @@ impl Gain {
     #[must_use]
     pub fn apply(&self, x: i16) -> i16 {
         let y = (i64::from(x) * i64::from(self.q15) + (1 << 14)) >> 15;
-        sat16(y.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32)
+        // ONE clamp, not two. The old form clamped to the `i32` range and then
+        // `sat16` clamped that to `i16` -- and `i16` is a subset of `i32`, so
+        // the first clamp could never change an outcome the second did not.
+        // Same value for every input; two fewer 64-bit compares per sample.
+        y.clamp(-32768, 32767) as i16
     }
 }
 
@@ -69,8 +91,22 @@ impl Element for Gain {
             out[..input.data.len()].copy_from_slice(input.data);
             return Ok(input.data.len());
         }
-        for (i, o) in input.data.chunks_exact(2).zip(out.chunks_exact_mut(2)) {
-            put_i16(o, self.apply(get_i16(i)));
+        // How wide the product has to be is a property of the GAIN, which is
+        // fixed for the whole call -- not of the sample. With |x| <= 32768 and
+        // |g| <= 65535 the product is at most 2^31 - 2^15, so the rounding term
+        // still fits and `i32` is EXACT: same bytes out, one `mull` in place of
+        // the 64x64 sequence. Above that the wide path is the only correct one,
+        // so the test is hoisted out of the loop rather than run per sample.
+        let g = self.q15;
+        if g.unsigned_abs() < 65536 {
+            for (i, o) in input.data.chunks_exact(2).zip(out.chunks_exact_mut(2)) {
+                let y = (i32::from(get_i16(i)) * g + (1 << 14)) >> 15;
+                put_i16(o, y.clamp(-32768, 32767) as i16);
+            }
+        } else {
+            for (i, o) in input.data.chunks_exact(2).zip(out.chunks_exact_mut(2)) {
+                put_i16(o, self.apply(get_i16(i)));
+            }
         }
         Ok(input.data.len())
     }

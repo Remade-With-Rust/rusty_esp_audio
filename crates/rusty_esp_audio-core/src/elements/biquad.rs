@@ -210,6 +210,60 @@ impl Element for Biquad {
         require_room(out, input.data.len())?;
         self.retune(input.format.sample_rate_hz)?;
         let ch = input.format.channels as usize;
+        let k = self.coef;
+        // `tick` carries FOUR state words per channel through `self`, so the
+        // generic form is eight memory round trips a sample plus five
+        // coefficient loads. Resolving `ch` once holds all of it in registers.
+        if ch == 1 {
+            let (mut x1, mut x2) = (self.x1[0], self.x2[0]);
+            let (mut y1, mut y2) = (self.y1[0], self.y2[0]);
+            for (fi, fo) in input.data.chunks_exact(2).zip(out.chunks_exact_mut(2)) {
+                let x = f32::from(get_i16(fi));
+                let y = k.b0 * x + k.b1 * x1 + k.b2 * x2 - k.a1 * y1 - k.a2 * y2;
+                x2 = x1;
+                x1 = x;
+                y2 = y1;
+                y1 = y;
+                put_i16(fo, round_sat16(y));
+            }
+            self.x1[0] = x1;
+            self.x2[0] = x2;
+            self.y1[0] = y1;
+            self.y2[0] = y2;
+            return Ok(input.data.len());
+        }
+        if ch == 2 {
+            let (mut lx1, mut lx2) = (self.x1[0], self.x2[0]);
+            let (mut ly1, mut ly2) = (self.y1[0], self.y2[0]);
+            let (mut rx1, mut rx2) = (self.x1[1], self.x2[1]);
+            let (mut ry1, mut ry2) = (self.y1[1], self.y2[1]);
+            for (fi, fo) in input.data.chunks_exact(4).zip(out.chunks_exact_mut(4)) {
+                let x = f32::from(get_i16(fi));
+                let y = k.b0 * x + k.b1 * lx1 + k.b2 * lx2 - k.a1 * ly1 - k.a2 * ly2;
+                lx2 = lx1;
+                lx1 = x;
+                ly2 = ly1;
+                ly1 = y;
+                put_i16(fo, round_sat16(y));
+                let x = f32::from(get_i16(&fi[2..]));
+                let y = k.b0 * x + k.b1 * rx1 + k.b2 * rx2 - k.a1 * ry1 - k.a2 * ry2;
+                rx2 = rx1;
+                rx1 = x;
+                ry2 = ry1;
+                ry1 = y;
+                put_i16(&mut fo[2..], round_sat16(y));
+            }
+            self.x1[0] = lx1;
+            self.x2[0] = lx2;
+            self.y1[0] = ly1;
+            self.y2[0] = ly2;
+            self.x1[1] = rx1;
+            self.x2[1] = rx2;
+            self.y1[1] = ry1;
+            self.y2[1] = ry2;
+            return Ok(input.data.len());
+        }
+        // Unreachable today (MAX_CHANNELS is 2); kept as the oracle.
         for (fi, fo) in input
             .data
             .chunks_exact(ch * 2)

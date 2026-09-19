@@ -28,7 +28,23 @@ impl Element for MonoToStereo {
         self.output_format(input.format)?;
         let n = input.data.len() * 2;
         require_room(out, n)?;
-        for (i, o) in input.data.chunks_exact(2).zip(out.chunks_exact_mut(4)) {
+        // Four frames a trip: the body is six byte moves, so one-at-a-time
+        // spends most of the loop on the counter and the two pointer bumps.
+        let mut ci = input.data.chunks_exact(8);
+        let mut co = out[..n].chunks_exact_mut(16);
+        for (i, o) in ci.by_ref().zip(co.by_ref()) {
+            for k in 0..4 {
+                o[k * 4] = i[k * 2];
+                o[k * 4 + 1] = i[k * 2 + 1];
+                o[k * 4 + 2] = i[k * 2];
+                o[k * 4 + 3] = i[k * 2 + 1];
+            }
+        }
+        for (i, o) in ci
+            .remainder()
+            .chunks_exact(2)
+            .zip(co.into_remainder().chunks_exact_mut(4))
+        {
             o[0] = i[0];
             o[1] = i[1];
             o[2] = i[0];
@@ -59,7 +75,21 @@ impl Element for StereoToMono {
         self.output_format(input.format)?;
         let n = input.data.len() / 2;
         require_room(out, n)?;
-        for (i, o) in input.data.chunks_exact(4).zip(out.chunks_exact_mut(2)) {
+        // Four frames a trip, for the same reason as `MonoToStereo`.
+        let mut ci = input.data.chunks_exact(16);
+        let mut co = out[..n].chunks_exact_mut(8);
+        for (i, o) in ci.by_ref().zip(co.by_ref()) {
+            for k in 0..4 {
+                let l = i32::from(get_i16(&i[k * 4..]));
+                let r = i32::from(get_i16(&i[k * 4 + 2..]));
+                put_i16(&mut o[k * 2..], ((l + r) >> 1) as i16);
+            }
+        }
+        for (i, o) in ci
+            .remainder()
+            .chunks_exact(4)
+            .zip(co.into_remainder().chunks_exact_mut(2))
+        {
             let l = i32::from(get_i16(&i[0..]));
             let r = i32::from(get_i16(&i[2..]));
             put_i16(o, ((l + r) >> 1) as i16);
@@ -75,10 +105,23 @@ pub fn mix_i16(a: &[u8], b: &[u8], out: &mut [u8]) -> Result<()> {
         return Err(Error::InvalidGeometry);
     }
     require_room(out, a.len())?;
-    for ((x, y), o) in a
+    // Four samples a trip: the body is a load, a load, an add, a clamp and a
+    // store, which is small enough that the loop overhead is a real share.
+    let n = a.len();
+    let mut ca = a.chunks_exact(8);
+    let mut cb = b.chunks_exact(8);
+    let mut co = out[..n].chunks_exact_mut(8);
+    for ((x, y), o) in ca.by_ref().zip(cb.by_ref()).zip(co.by_ref()) {
+        for k in 0..4 {
+            let s = i32::from(get_i16(&x[k * 2..])) + i32::from(get_i16(&y[k * 2..]));
+            put_i16(&mut o[k * 2..], sat16(s));
+        }
+    }
+    for ((x, y), o) in ca
+        .remainder()
         .chunks_exact(2)
-        .zip(b.chunks_exact(2))
-        .zip(out.chunks_exact_mut(2))
+        .zip(cb.remainder().chunks_exact(2))
+        .zip(co.into_remainder().chunks_exact_mut(2))
     {
         put_i16(o, sat16(i32::from(get_i16(x)) + i32::from(get_i16(y))));
     }
