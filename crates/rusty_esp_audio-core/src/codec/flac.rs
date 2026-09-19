@@ -55,9 +55,16 @@ impl FlacEncoder {
         if format.sample != SampleFormat::I16 || format.channels > 8 {
             return Err(Error::Unsupported);
         }
-        // Validate the parameters once, up front.
-        rusty_flac::Encoder::new(format.sample_rate_hz, u32::from(format.channels), 16)
-            .map_err(|_| Error::InvalidFormat)?;
+        // Validate the format directly instead of constructing (and immediately
+        // dropping) a rusty_flac::Encoder just to check it. The discarded
+        // encoder allocated its channel table on every call — wasted work in a
+        // per-block encode loop. These are exactly rusty_flac's own limits.
+        if format.channels == 0
+            || format.sample_rate_hz == 0
+            || format.sample_rate_hz >= (1 << 20)
+        {
+            return Err(Error::InvalidFormat);
+        }
         Ok(FlacEncoder {
             format,
             level: level.min(8),
