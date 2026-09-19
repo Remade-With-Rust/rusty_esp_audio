@@ -99,7 +99,20 @@ impl Element for Gain {
         // so the test is hoisted out of the loop rather than run per sample.
         let g = self.q15;
         if g.unsigned_abs() < 65536 {
-            for (i, o) in input.data.chunks_exact(2).zip(out.chunks_exact_mut(2)) {
+            let n = input.data.len();
+            let mut ci = input.data.chunks_exact(32);
+            let mut co = out[..n].chunks_exact_mut(32);
+            for (i, o) in ci.by_ref().zip(co.by_ref()) {
+                for k in 0..16 {
+                    let y = (i32::from(get_i16(&i[k * 2..])) * g + (1 << 14)) >> 15;
+                    put_i16(&mut o[k * 2..], y.clamp(-32768, 32767) as i16);
+                }
+            }
+            for (i, o) in ci
+                .remainder()
+                .chunks_exact(2)
+                .zip(co.into_remainder().chunks_exact_mut(2))
+            {
                 let y = (i32::from(get_i16(i)) * g + (1 << 14)) >> 15;
                 put_i16(o, y.clamp(-32768, 32767) as i16);
             }

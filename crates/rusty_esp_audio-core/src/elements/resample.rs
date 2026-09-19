@@ -117,17 +117,56 @@ impl Element for LinearResampler {
         // subtract per whole input frame crossed.
         let mut idx = (self.num / self.out_r) as usize;
         let mut rem = self.num % self.out_r;
+        // The mono arm's cached interpolation endpoints; `held` is the `idx`
+        // they were read for, and `usize::MAX` is never a valid frame index.
+        let (mut held, mut x0, mut dx) = (usize::MAX, 0i64, 0i64);
         while self.num < end {
-            let frac = (rem << 32) / self.out_r;
-            for c in 0..ch {
-                let x0 = i64::from(if idx == 0 {
-                    self.last[c]
-                } else {
-                    frame(idx - 1, c)
-                });
-                let x1 = i64::from(frame(idx, c));
-                let y = x0 + (((x1 - x0) * frac as i64 + (1 << 31)) >> 32);
-                put_i16(&mut out[written * fb + c * 2..], y as i16);
+            // The last 64-bit division, and the one that costs: a libcall on
+            // this core. When `out_r` fits 16 bits -- it is a REDUCED rate
+            // ratio, so 48 000 is already an extreme -- the same quotient
+            // comes out of two 32-bit divisions, which are instructions.
+            // Long division in base 2^16: `rem < out_r`, so the quotient's
+            // high half is `(rem << 16) / out_r` and the low half is that
+            // remainder shifted and divided again.
+            let frac = if self.out_r < 0x1_0000 {
+                let d = self.out_r as u32;
+                let hi = (rem as u32) << 16;
+                let (q1, r1) = (hi / d, hi % d);
+                u64::from((q1 << 16) | ((r1 << 16) / d))
+            } else {
+                (rem << 32) / self.out_r
+            };
+            // Mono is the voice path, and it is where the generic form costs
+            // most: `frame` multiplies by a runtime frame size and re-derives
+            // the channel offset for a loop that runs ONCE.
+            if ch == 1 {
+                // The two endpoints are a function of `idx` alone, and when
+                // upsampling `idx` holds still for several output frames --
+                // three of them at 16k -> 48k. Re-reading them per output
+                // frame pays two bounds-checked loads and a byte assembly each
+                // to fetch what has not changed.
+                if idx != held {
+                    x0 = i64::from(if idx == 0 {
+                        self.last[0]
+                    } else {
+                        get_i16(&input.data[(idx - 1) * 2..])
+                    });
+                    dx = i64::from(get_i16(&input.data[idx * 2..])) - x0;
+                    held = idx;
+                }
+                let y = x0 + ((dx * frac as i64 + (1 << 31)) >> 32);
+                put_i16(&mut out[written * 2..], y as i16);
+            } else {
+                for c in 0..ch {
+                    let x0 = i64::from(if idx == 0 {
+                        self.last[c]
+                    } else {
+                        frame(idx - 1, c)
+                    });
+                    let x1 = i64::from(frame(idx, c));
+                    let y = x0 + (((x1 - x0) * frac as i64 + (1 << 31)) >> 32);
+                    put_i16(&mut out[written * fb + c * 2..], y as i16);
+                }
             }
             written += 1;
             self.num += self.in_r;
