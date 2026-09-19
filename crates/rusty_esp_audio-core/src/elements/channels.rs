@@ -1,7 +1,7 @@
 //! Channel operations: mono ↔ stereo and a saturating mix.
 
 use rusty_esp_core::error::{Error, Result};
-use rusty_esp_core::pcm::{PcmBlock, PcmFormat};
+use rusty_esp_core::pcm::{PcmBlock, PcmFormat, as_i16, as_i16_mut};
 
 use super::{require_i16_any, require_room};
 use crate::pipeline::Element;
@@ -75,7 +75,26 @@ impl Element for StereoToMono {
         self.output_format(input.format)?;
         let n = input.data.len() / 2;
         require_room(out, n)?;
-        // Four frames a trip, for the same reason as `MonoToStereo`.
+        // FAST ARM: native halfword loads.
+        //
+        // The byte arm below reassembles every sample with
+        // `i16::from_le_bytes([b[0], b[1]])`, which on a 32-bit core is two
+        // byte loads plus a shift and an or, because a halfword load needs
+        // 2-byte alignment the compiler cannot prove a `&[u8]` has. A census
+        // of the flashed ELF put 56 of this loop's 72 instructions on that
+        // marshalling, to do four adds and four shifts.
+        //
+        // `as_i16` establishes the alignment ONCE per call and hands back
+        // real samples; `None` means "take the byte path", which a misaligned
+        // buffer or a big-endian target gets. Both arms compute the same
+        // `(l + r) >> 1`, so the byte arm stays the oracle -- the same shape
+        // a scalar kernel keeps for its vector twin.
+        if let (Some(src), Some(dst)) = (as_i16(input.data), as_i16_mut(&mut out[..n])) {
+            mix_to_mono(src, dst);
+            return Ok(n);
+        }
+
+        // BYTE ARM: the oracle, and the fallback when the view is refused.
         let mut ci = input.data.chunks_exact(64);
         let mut co = out[..n].chunks_exact_mut(32);
         for (i, o) in ci.by_ref().zip(co.by_ref()) {
@@ -95,6 +114,39 @@ impl Element for StereoToMono {
             put_i16(o, ((l + r) >> 1) as i16);
         }
         Ok(n)
+    }
+}
+
+/// `(l + r) >> 1` over aligned samples, SIXTEEN frames a trip.
+///
+/// One halfword load per channel where the byte path needs two byte loads, a
+/// shift and an or. `src` is interleaved stereo and `dst` is mono, so `src`
+/// carries exactly twice `dst`'s elements.
+///
+/// Sixteen is measured, not assumed. All five widths were run beside each
+/// other in ONE ESP32-S3 binary, byte-identity checked first, ps per frame:
+/// 1 -> 249 207, 4 -> 112 723, 8 -> 104 224, **16 -> 97 332**, 32 -> 178 832.
+/// Thirty-two falls off the register-window cliff exactly as `Gain` does.
+/// Note the shape of the first row: ONE frame a trip over aligned samples
+/// (249 207) is no better than SIXTEEN frames a trip over bytes (255 159) --
+/// the access method and the unroll are worth about the same, and they
+/// compose.
+fn mix_to_mono(src: &[i16], dst: &mut [i16]) {
+    let mut ci = src.chunks_exact(32);
+    let mut co = dst.chunks_exact_mut(16);
+    for (i, o) in ci.by_ref().zip(co.by_ref()) {
+        for k in 0..16 {
+            let l = i32::from(i[k * 2]);
+            let r = i32::from(i[k * 2 + 1]);
+            o[k] = ((l + r) >> 1) as i16;
+        }
+    }
+    for (i, o) in ci
+        .remainder()
+        .chunks_exact(2)
+        .zip(co.into_remainder().iter_mut())
+    {
+        *o = ((i32::from(i[0]) + i32::from(i[1])) >> 1) as i16;
     }
 }
 

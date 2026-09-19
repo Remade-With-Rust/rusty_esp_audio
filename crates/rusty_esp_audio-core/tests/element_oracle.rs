@@ -217,3 +217,55 @@ const RESAMPLE: [u64; 6] = [
     3_280_085_387_383_701_394,
 ];
 const RESAMPLE_STEREO: u64 = 4_688_573_486_506_082_247;
+
+/// `StereoToMono` has TWO arms: a fast one over an aligned `&[i16]` view and
+/// the original byte loop, which is both the oracle and what a misaligned or
+/// big-endian buffer gets. Every ordinary buffer here is aligned, so the
+/// digests above only ever exercise the fast one. This drives BOTH, by
+/// deliberately offsetting the input and the output by one byte, and requires
+/// them to produce the same bytes.
+///
+/// Offsetting by one makes the length odd as well as the address wrong, so it
+/// exercises both reasons `as_i16` refuses.
+#[test]
+fn stereo_to_mono_arms_agree_including_the_misaligned_one() {
+    // `PcmBlock::new` rejects an empty block, so start at one frame.
+    for frames in [1usize, 2, 3, 7, 8, 9, 15, 16, 17, 31, 64, 257] {
+        let src = corpus(frames, 2);
+        let n = src.len() / 2;
+        let f = fmt(2);
+
+        // aligned: a fresh Vec is 2-byte aligned and the length is even
+        let mut fast = vec![0u8; n];
+        let a = run(&mut StereoToMono, f, &src, &mut fast);
+
+        // misaligned: slide input and output one byte into larger buffers
+        let mut shifted_src = vec![0u8; src.len() + 1];
+        shifted_src[1..].copy_from_slice(&src);
+        let mut shifted_dst = vec![0u8; n + 1];
+        let b = run(
+            &mut StereoToMono,
+            f,
+            &shifted_src[1..],
+            &mut shifted_dst[1..],
+        );
+
+        assert_eq!(a, b, "byte counts differ at {frames} frames");
+        assert_eq!(
+            &fast[..a],
+            &shifted_dst[1..1 + b],
+            "the aligned and byte arms of StereoToMono disagree at {frames} frames"
+        );
+
+        // and both must still match the plain definition
+        let want: Vec<u8> = src
+            .chunks_exact(4)
+            .flat_map(|p| {
+                let l = i32::from(i16::from_le_bytes([p[0], p[1]]));
+                let r = i32::from(i16::from_le_bytes([p[2], p[3]]));
+                (((l + r) >> 1) as i16).to_le_bytes()
+            })
+            .collect();
+        assert_eq!(&fast[..a], &want[..], "fast arm vs the definition");
+    }
+}
