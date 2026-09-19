@@ -100,6 +100,10 @@ impl Element for Gain {
         let g = self.q15;
         if g.unsigned_abs() < 65536 {
             let n = input.data.len();
+            // SIXTEEN. Thirty-two measured +115.3% against a 1.4% null arm on
+            // an ESP32-S3 (2026-09-19) -- the working set stops fitting the
+            // register window and every lane starts spilling. Unroll width has
+            // a cliff, not a plateau, and this is where this body's sits.
             let mut ci = input.data.chunks_exact(32);
             let mut co = out[..n].chunks_exact_mut(32);
             for (i, o) in ci.by_ref().zip(co.by_ref()) {

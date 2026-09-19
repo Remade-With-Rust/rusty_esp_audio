@@ -79,7 +79,27 @@ impl Element for DcBlock {
         // four memory round trips a sample to carry two floats.
         if ch == 1 {
             let (mut x1, mut y1) = (self.x1[0], self.y1[0]);
-            for (fi, fo) in input.data.chunks_exact(2).zip(out.chunks_exact_mut(2)) {
+            // Two samples a trip. The recurrence is serial and stays serial --
+            // nothing here breaks the dependency -- so this only amortises the
+            // counter and the two pointer bumps over twice the work.
+            let n = input.data.len();
+            let mut ci = input.data.chunks_exact(4);
+            let mut co = out[..n].chunks_exact_mut(4);
+            for (fi, fo) in ci.by_ref().zip(co.by_ref()) {
+                let a = f32::from(get_i16(fi));
+                let ya = a - x1 + r * y1;
+                put_i16(fo, round_sat16(ya));
+                let b = f32::from(get_i16(&fi[2..]));
+                let yb = b - a + r * ya;
+                put_i16(&mut fo[2..], round_sat16(yb));
+                x1 = b;
+                y1 = yb;
+            }
+            for (fi, fo) in ci
+                .remainder()
+                .chunks_exact(2)
+                .zip(co.into_remainder().chunks_exact_mut(2))
+            {
                 let x = f32::from(get_i16(fi));
                 let y = x - x1 + r * y1;
                 x1 = x;

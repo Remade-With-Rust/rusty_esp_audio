@@ -217,7 +217,31 @@ impl Element for Biquad {
         if ch == 1 {
             let (mut x1, mut x2) = (self.x1[0], self.x2[0]);
             let (mut y1, mut y2) = (self.y1[0], self.y2[0]);
-            for (fi, fo) in input.data.chunks_exact(2).zip(out.chunks_exact_mut(2)) {
+            // Two samples a trip. The second sample's state is the first's
+            // written out by hand -- x1 becomes `a`, x2 becomes the old x1,
+            // and likewise for y -- so the arithmetic per sample is unchanged
+            // and only the counter and the pointer bumps are amortised. Same
+            // shape that paid on `DcBlock`.
+            let n = input.data.len();
+            let mut ci = input.data.chunks_exact(4);
+            let mut co = out[..n].chunks_exact_mut(4);
+            for (fi, fo) in ci.by_ref().zip(co.by_ref()) {
+                let a = f32::from(get_i16(fi));
+                let ya = k.b0 * a + k.b1 * x1 + k.b2 * x2 - k.a1 * y1 - k.a2 * y2;
+                put_i16(fo, round_sat16(ya));
+                let b = f32::from(get_i16(&fi[2..]));
+                let yb = k.b0 * b + k.b1 * a + k.b2 * x1 - k.a1 * ya - k.a2 * y1;
+                put_i16(&mut fo[2..], round_sat16(yb));
+                x2 = a;
+                x1 = b;
+                y2 = ya;
+                y1 = yb;
+            }
+            for (fi, fo) in ci
+                .remainder()
+                .chunks_exact(2)
+                .zip(co.into_remainder().chunks_exact_mut(2))
+            {
                 let x = f32::from(get_i16(fi));
                 let y = k.b0 * x + k.b1 * x1 + k.b2 * x2 - k.a1 * y1 - k.a2 * y2;
                 x2 = x1;

@@ -30,10 +30,10 @@ impl Element for MonoToStereo {
         require_room(out, n)?;
         // Four frames a trip: the body is six byte moves, so one-at-a-time
         // spends most of the loop on the counter and the two pointer bumps.
-        let mut ci = input.data.chunks_exact(16);
-        let mut co = out[..n].chunks_exact_mut(32);
+        let mut ci = input.data.chunks_exact(32);
+        let mut co = out[..n].chunks_exact_mut(64);
         for (i, o) in ci.by_ref().zip(co.by_ref()) {
-            for k in 0..8 {
+            for k in 0..16 {
                 o[k * 4] = i[k * 2];
                 o[k * 4 + 1] = i[k * 2 + 1];
                 o[k * 4 + 2] = i[k * 2];
@@ -76,10 +76,10 @@ impl Element for StereoToMono {
         let n = input.data.len() / 2;
         require_room(out, n)?;
         // Four frames a trip, for the same reason as `MonoToStereo`.
-        let mut ci = input.data.chunks_exact(32);
-        let mut co = out[..n].chunks_exact_mut(16);
+        let mut ci = input.data.chunks_exact(64);
+        let mut co = out[..n].chunks_exact_mut(32);
         for (i, o) in ci.by_ref().zip(co.by_ref()) {
-            for k in 0..8 {
+            for k in 0..16 {
                 let l = i32::from(get_i16(&i[k * 4..]));
                 let r = i32::from(get_i16(&i[k * 4 + 2..]));
                 put_i16(&mut o[k * 2..], ((l + r) >> 1) as i16);
