@@ -1000,7 +1000,7 @@ checksum = "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f"
 
 [[package]]
 name = "rusty_esp_audio"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "rusty_esp_audio-core",
  "rusty_esp_audio-esp",
@@ -1008,7 +1008,7 @@ dependencies = [
 
 [[package]]
 name = "rusty_esp_audio-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "embedded-hal 1.0.0",
  "libm",
@@ -1020,7 +1020,7 @@ dependencies = [
 
 [[package]]
 name = "rusty_esp_audio-esp"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "esp-idf-hal",
  "rusty_esp_audio-core",
@@ -1029,11 +1029,11 @@ dependencies = [
 
 [[package]]
 name = "rusty_esp_core"
-version = "0.1.0"
+version = "0.1.1"
 
 [[package]]
 name = "rusty_esp_dsp"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "libm",
  "rusty_esp_core",
@@ -1483,4 +1483,4 @@ checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
 
 [[patch.unused]]
 name = "rusty_esp_alloc"
-version = "0.1.0"
+version = "0.1.1"

@@ -14,6 +14,38 @@ hardware results, the method lines and the open defects live in that package's
 [`docs/LEDGER.md`](https://github.com/Remade-With-Rust/rusty_esp_audio/blob/main/docs/LEDGER.md), where no number
 appears without the run that produced it.
 
+## On an ESP32-S3
+
+Turn on `pie-s3` and the elements run the chip's 128-bit vector twins instead
+of their scalar arms — same bytes out, gated byte-identical, and on any other
+target the scalar IS what runs, so the feature is safe to leave on.
+
+```toml
+rusty_esp_audio-core = { version = "0.1", features = ["pie-s3"] }
+```
+
+Measured through the element, on a Seeed XIAO ESP32-S3 Sense:
+
+| call site | scalar | vector | |
+|---|---:|---:|---:|
+| `peak_abs_i16` | 78,259 | 10,272 | **−86.9%** |
+| `mix_i16` | 108,364 | 16,783 | **−84.5%** |
+| `Convert` integer pairs | 193,418 | 29,240 | **−84.9%** |
+| `rms_dbfs_i16` | 215,142 | 38,312 | **−82.2%** |
+| `Gain::process` | 134,920 | 27,896 | **−79.3%** |
+| `StereoToMono::process` | 96,008 | 42,897 | **−55.3%** |
+| `MonoToStereo::process` | 55,259 | 27,165 | **−50.8%** |
+
+(picoseconds per sample; lower is better)
+
+`rms_dbfs_i16` is the one that pays for itself: a capture loop calls it once
+per block, right after `Pipeline::process`.
+
+Two arms are deliberately NOT accelerated, and the source says why rather
+than leaving it to inference. `Biquad`, `DcBlock` and the AGC filter are
+sequential — `y[n]` depends on `y[n-1]` — and `LinearResampler` gathers at
+fractional positions, which this unit has no instruction for.
+
 ## Part of Janus
 
 **Janus** rebuilds the Espressif ESP32 and Arduino application portfolio as
