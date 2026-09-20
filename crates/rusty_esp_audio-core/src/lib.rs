@@ -81,7 +81,7 @@ pub use pie::{peak_abs_i16, rms_dbfs_i16};
 /// host build of this crate with `pie-s3` on still runs the oracle and the
 /// tests still mean what they say.
 #[cfg(feature = "pie-s3")]
-mod pie {
+pub(crate) mod pie {
     /// Level of an interleaved i16 block in dBFS. See
     /// [`rusty_esp_dsp::sample::rms_dbfs_i16`], which this is gated against.
     #[must_use]
@@ -108,6 +108,92 @@ mod pie {
         {
             rusty_esp_dsp::sample::peak_abs_i16(a)
         }
+    }
+
+    // ---- the element helpers -----------------------------------------
+    //
+    // Each returns `true` when it handled the block. The `pie-s3`-off twin
+    // of each returns `false` from a `const`-foldable body, so the caller's
+    // scalar arm is never dead code and no `unreachable_code` lint fires.
+
+    /// Mono to stereo. [`crate::elements::MonoToStereo`] is the oracle.
+    pub fn mono_to_stereo(src: &[i16], dst: &mut [i16]) -> bool {
+        #[cfg(target_arch = "xtensa")]
+        {
+            rusty_esp_dsp_esp::pie_s3::mono_to_stereo_i16(src, dst);
+            true
+        }
+        #[cfg(not(target_arch = "xtensa"))]
+        {
+            let _ = (src, dst);
+            false
+        }
+    }
+
+    /// Stereo to mono. [`crate::elements::StereoToMono`] is the oracle.
+    pub fn stereo_to_mono(src: &[i16], dst: &mut [i16]) -> bool {
+        #[cfg(target_arch = "xtensa")]
+        {
+            rusty_esp_dsp_esp::pie_s3::stereo_to_mono_i16(src, dst);
+            true
+        }
+        #[cfg(not(target_arch = "xtensa"))]
+        {
+            let _ = (src, dst);
+            false
+        }
+    }
+
+    /// Saturating sum of two i16 streams. [`crate::elements::mix_i16`] is
+    /// the oracle.
+    pub fn mix(a: &[i16], b: &[i16], out: &mut [i16]) -> bool {
+        #[cfg(target_arch = "xtensa")]
+        {
+            rusty_esp_dsp_esp::pie_s3::mix_i16(a, b, out);
+            true
+        }
+        #[cfg(not(target_arch = "xtensa"))]
+        {
+            let _ = (a, b, out);
+            false
+        }
+    }
+
+    /// `(x * q15 + (1 << 14)) >> 15`, clamped. The twin restricts itself to
+    /// `|q15| <= 32767` and hands anything louder back, so the caller must
+    /// keep its own wide path.
+    pub fn gain(src: &[i16], q15: i32, dst: &mut [i16]) -> bool {
+        #[cfg(target_arch = "xtensa")]
+        {
+            if q15.unsigned_abs() <= 32767 {
+                rusty_esp_dsp_esp::pie_s3::gain_i16(src, q15, dst);
+                return true;
+            }
+            false
+        }
+        #[cfg(not(target_arch = "xtensa"))]
+        {
+            let _ = (src, q15, dst);
+            false
+        }
+    }
+}
+
+/// The `pie-s3`-off twin of [`pie`]: every helper declines, so each element
+/// takes the scalar arm it already had.
+#[cfg(not(feature = "pie-s3"))]
+pub(crate) mod pie {
+    pub fn mono_to_stereo(_: &[i16], _: &mut [i16]) -> bool {
+        false
+    }
+    pub fn stereo_to_mono(_: &[i16], _: &mut [i16]) -> bool {
+        false
+    }
+    pub fn mix(_: &[i16], _: &[i16], _: &mut [i16]) -> bool {
+        false
+    }
+    pub fn gain(_: &[i16], _: i32, _: &mut [i16]) -> bool {
+        false
     }
 }
 

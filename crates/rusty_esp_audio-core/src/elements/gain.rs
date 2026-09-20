@@ -129,6 +129,13 @@ impl Element for Gain {
         // the byte path below, which stays the oracle.
         let n = input.data.len();
         if let (Some(src), Some(dst)) = (as_i16(input.data), as_i16_mut(&mut out[..n])) {
+            // CHIP ARM: QACC does the whole of `(x*g + (1<<14)) >> 15`
+            // clamped in three instructions per eight samples. It takes only
+            // `|q15| <= 32767` -- the multiplier has to fit an i16 lane --
+            // and declines anything louder, which then takes the arms below.
+            if crate::pie::gain(src, self.q15, dst) {
+                return Ok(n);
+            }
             if self.q15.unsigned_abs() < 65536 {
                 gain_narrow(src, self.q15, dst);
             } else {
