@@ -64,7 +64,52 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Level of an interleaved i16 block in dBFS — `rusty_esp_dsp`'s reduction
 /// (moved there in D0, 2026-09-02), at the path this crate always had.
+#[cfg(not(feature = "pie-s3"))]
 pub use rusty_esp_dsp::sample::{peak_abs_i16, rms_dbfs_i16};
+
+#[cfg(feature = "pie-s3")]
+pub use pie::{peak_abs_i16, rms_dbfs_i16};
+
+/// The chip twins of the reductions this crate re-exports.
+///
+/// `rms_dbfs_i16` is the one that matters: the shipping PDM firmware calls
+/// it once per captured block, right after `Pipeline::process`, and until
+/// this module existed it ran the scalar while a measured −79.6% twin sat
+/// unreachable in `rusty_esp_dsp-esp`.
+///
+/// Each function is `cfg`-switched on the TARGET, not on the feature, so a
+/// host build of this crate with `pie-s3` on still runs the oracle and the
+/// tests still mean what they say.
+#[cfg(feature = "pie-s3")]
+mod pie {
+    /// Level of an interleaved i16 block in dBFS. See
+    /// [`rusty_esp_dsp::sample::rms_dbfs_i16`], which this is gated against.
+    #[must_use]
+    pub fn rms_dbfs_i16(samples: &[u8]) -> f32 {
+        #[cfg(target_arch = "xtensa")]
+        {
+            rusty_esp_dsp_esp::pie_s3::rms_dbfs_i16(samples)
+        }
+        #[cfg(not(target_arch = "xtensa"))]
+        {
+            rusty_esp_dsp::sample::rms_dbfs_i16(samples)
+        }
+    }
+
+    /// Largest magnitude in an i16 block. See
+    /// [`rusty_esp_dsp::sample::peak_abs_i16`], which this is gated against.
+    #[must_use]
+    pub fn peak_abs_i16(a: &[i16]) -> u16 {
+        #[cfg(target_arch = "xtensa")]
+        {
+            rusty_esp_dsp_esp::pie_s3::peak_abs_i16(a)
+        }
+        #[cfg(not(target_arch = "xtensa"))]
+        {
+            rusty_esp_dsp::sample::peak_abs_i16(a)
+        }
+    }
+}
 
 /// Write an `i16` sample as two little-endian bytes.
 #[inline]

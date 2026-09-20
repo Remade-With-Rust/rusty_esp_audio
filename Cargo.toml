@@ -33,6 +33,11 @@ rusty_esp_audio-esp = { path = "crates/rusty_esp_audio-esp", version = "0.1.0", 
 # URL to the sibling checkout, so local edits are visible without a push.
 rusty_esp_core = { version = "0.1", git = "https://github.com/Remade-With-Rust/rusty_esp_core", default-features = false }
 rusty_esp_dsp = { version = "0.1", git = "https://github.com/Remade-With-Rust/rusty_esp_dsp", default-features = false }
+# The CHIP half of the kernel home. Optional, and off by default: with it
+# on, the elements below run `ee.*` twins on an ESP32-S3 and the scalar
+# oracle everywhere else, so this dependency does not cost a host build
+# anything and does not make the core track-specific.
+rusty_esp_dsp-esp = { version = "0.1", git = "https://github.com/Remade-With-Rust/rusty_esp_dsp", default-features = false }
 
 [profile.release]
 lto = "thin"

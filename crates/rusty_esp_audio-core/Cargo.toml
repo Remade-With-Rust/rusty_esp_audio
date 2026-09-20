@@ -22,10 +22,16 @@ alloc = ["rusty_esp_core/alloc", "rusty_esp_dsp/alloc"]
 # FLAC via the house codec. Needs `alloc` (rusty_flac buffers the stream it
 # builds); `rusty_flac/libm` keeps host and chip encoders bit-identical.
 flac = ["alloc", "dep:rusty_flac"]
+# Run the ESP32-S3 PIE twins where one exists. Correctness is unchanged:
+# every twin is gated byte-identical against the scalar it replaces, and
+# off-chip the twins ARE that scalar, so this feature is safe to leave on
+# in a host build or a host test.
+pie-s3 = ["dep:rusty_esp_dsp-esp", "rusty_esp_dsp-esp/pie-s3"]
 
 [dependencies]
 rusty_esp_core = { workspace = true }
 rusty_esp_dsp = { workspace = true }
+rusty_esp_dsp-esp = { workspace = true, optional = true }
 # The I2C trait the codec chips ride on. 1.0 is the stable embedded-hal; no_std.
 embedded-hal = "1.0"
 # The `no-std` branch until it is released to crates.io (Janus plan A3).
