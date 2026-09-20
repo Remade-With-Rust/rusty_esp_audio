@@ -1482,5 +1482,9 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
 
 [[patch.unused]]
+name = "rusty_esp_dsp-esp"
+version = "0.1.1"
+
+[[patch.unused]]
 name = "rusty_esp_alloc"
 version = "0.1.1"
