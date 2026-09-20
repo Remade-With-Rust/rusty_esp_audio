@@ -159,6 +159,59 @@ pub(crate) mod pie {
         }
     }
 
+    /// The three INTEGER `convert` pairs. The element's own fast arms are
+    /// i16<->f32, which the PIE unit cannot touch -- it is integer-only --
+    /// and the integer pairs went through the generic per-sample table.
+    ///
+    /// Two of the three need no arithmetic once the little-endian layout is
+    /// taken seriously: `(x as i32) << 16` is `x` interleaved with a zero
+    /// halfword below it, and `(x >> 16) as i16` is the high halfword.
+    ///
+    /// Returns the byte count it wrote, or `None` for a pair it does not
+    /// handle or a buffer that does not view as samples.
+    pub fn convert(
+        input: &rusty_esp_core::pcm::PcmBlock<'_>,
+        to: rusty_esp_core::pcm::SampleFormat,
+        out: &mut [u8],
+    ) -> Option<usize> {
+        #[cfg(target_arch = "xtensa")]
+        {
+            use rusty_esp_core::pcm::SampleFormat::{I16, I24In32, I32};
+            use rusty_esp_core::pcm::{as_i16, as_i16_mut, as_i32, as_i32_mut};
+            let from = input.format.sample;
+            let n = rusty_esp_dsp::sample::pcm::output_bytes(from, to, input.data.len());
+            if out.len() < n {
+                return None;
+            }
+            match (from, to) {
+                (I16, I32) | (I16, I24In32) => {
+                    let si = as_i16(input.data)?;
+                    let so = as_i32_mut(&mut out[..n])?;
+                    rusty_esp_dsp_esp::pie_s3::convert_i16_to_i32(si, so);
+                    Some(n)
+                }
+                (I32, I16) | (I24In32, I16) => {
+                    let si = as_i32(input.data)?;
+                    let so = as_i16_mut(&mut out[..n])?;
+                    rusty_esp_dsp_esp::pie_s3::convert_i32_to_i16(si, so);
+                    Some(n)
+                }
+                (I32, I24In32) => {
+                    let si = as_i32(input.data)?;
+                    let so = as_i32_mut(&mut out[..n])?;
+                    rusty_esp_dsp_esp::pie_s3::convert_i32_to_i24in32(si, so);
+                    Some(n)
+                }
+                _ => None,
+            }
+        }
+        #[cfg(not(target_arch = "xtensa"))]
+        {
+            let _ = (input, to, out);
+            None
+        }
+    }
+
     /// `(x * q15 + (1 << 14)) >> 15`, clamped. The twin restricts itself to
     /// `|q15| <= 32767` and hands anything louder back, so the caller must
     /// keep its own wide path.
@@ -194,6 +247,13 @@ pub(crate) mod pie {
     }
     pub fn gain(_: &[i16], _: i32, _: &mut [i16]) -> bool {
         false
+    }
+    pub fn convert(
+        _: &rusty_esp_core::pcm::PcmBlock<'_>,
+        _: rusty_esp_core::pcm::SampleFormat,
+        _: &mut [u8],
+    ) -> Option<usize> {
+        None
     }
 }
 
