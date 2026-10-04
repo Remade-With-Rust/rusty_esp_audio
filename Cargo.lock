@@ -1029,11 +1029,13 @@ dependencies = [
 
 [[package]]
 name = "rusty_esp_core"
-version = "0.1.1"
+version = "0.1.2"
+source = "git+https://github.com/Remade-With-Rust/rusty_esp_core#abefacff50c685b192dd4416094621b1ba2c65ab"
 
 [[package]]
 name = "rusty_esp_dsp"
 version = "0.1.1"
+source = "git+https://github.com/Remade-With-Rust/rusty_esp_dsp#e78f24a82c9a3ce27e069f9a7aed5262f4939b17"
 dependencies = [
  "libm",
  "rusty_esp_core",
@@ -1041,18 +1043,19 @@ dependencies = [
 
 [[package]]
 name = "rusty_esp_dsp-esp"
-version = "0.1.0"
-source = "git+https://github.com/Remade-With-Rust/rusty_esp_dsp#4d28381fdfd8de1718f9ed28a28485bfd65e9209"
+version = "0.1.1"
+source = "git+https://github.com/Remade-With-Rust/rusty_esp_dsp#e78f24a82c9a3ce27e069f9a7aed5262f4939b17"
 dependencies = [
+ "libm",
  "rusty_esp_core",
  "rusty_esp_dsp",
 ]
 
 [[package]]
 name = "rusty_flac"
-version = "0.1.3"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4288343435e4481eccd2b80b13d5d6425f512b5fc5ff26bc0567c4d2e3787a52"
+checksum = "a228fd0f8760a944dccbd9856860273ae6ab86b87f6c5ddc85a8adf8b1976e8e"
 dependencies = [
  "libm",
 ]
@@ -1480,11 +1483,3 @@ name = "zmij"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
-
-[[patch.unused]]
-name = "rusty_esp_dsp-esp"
-version = "0.1.1"
-
-[[patch.unused]]
-name = "rusty_esp_alloc"
-version = "0.1.1"
