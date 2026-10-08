@@ -24,8 +24,7 @@
 //! keeps holding if a corpus is ever regenerated.
 
 use rusty_esp_audio_core::elements::{
-    Agc, Biquad, BiquadKind, DcBlock, Gain, LinearResampler, MonoToStereo, StereoToMono,
-    mix_i16,
+    Agc, Biquad, BiquadKind, DcBlock, Gain, LinearResampler, MonoToStereo, StereoToMono, mix_i16,
 };
 use rusty_esp_audio_core::pipeline::Element;
 use rusty_esp_core::pcm::{PcmBlock, PcmFormat, SampleFormat};
@@ -108,7 +107,18 @@ fn stateless_elements_are_byte_identical() {
     // NOT fit i32 and must keep the wide path.
     let mut acc = Vec::new();
     for &q in &[
-        0i32, 1, -1, 16384, 32768, 65535, 65536, 65537, 131_072, -131_072, 1 << 20, 65536 * 512,
+        0i32,
+        1,
+        -1,
+        16384,
+        32768,
+        65535,
+        65536,
+        65537,
+        131_072,
+        -131_072,
+        1 << 20,
+        65536 * 512,
         -65536 * 512,
     ] {
         let g = Gain::from_q15(q);
@@ -147,7 +157,11 @@ fn stateful_elements_are_byte_identical() {
         let mut dc = DcBlock::new();
         let mut out = vec![0u8; cap];
         let n = run(&mut dc, f, &data, &mut out);
-        gate(&format!("DC_BLOCK ch={ch}"), &out[..n], DC_BLOCK[usize::from(ch) - 1]);
+        gate(
+            &format!("DC_BLOCK ch={ch}"),
+            &out[..n],
+            DC_BLOCK[usize::from(ch) - 1],
+        );
         split_matches_whole(&DcBlock::new(), f, &data, cap);
 
         let kind = BiquadKind::LowPass {
@@ -157,7 +171,11 @@ fn stateful_elements_are_byte_identical() {
         let mut bq = Biquad::new(kind);
         let mut out = vec![0u8; cap];
         let n = run(&mut bq, f, &data, &mut out);
-        gate(&format!("BIQUAD_LP ch={ch}"), &out[..n], BIQUAD_LP[usize::from(ch) - 1]);
+        gate(
+            &format!("BIQUAD_LP ch={ch}"),
+            &out[..n],
+            BIQUAD_LP[usize::from(ch) - 1],
+        );
         split_matches_whole(&Biquad::new(kind), f, &data, cap);
     }
 }
@@ -255,7 +273,13 @@ fn every_two_armed_element_agrees_with_itself() {
         let mono = corpus(frames, 1);
         let stereo = corpus(frames, 2);
 
-        arms_agree("StereoToMono", &StereoToMono, fmt(2), &stereo, stereo.len() / 2);
+        arms_agree(
+            "StereoToMono",
+            &StereoToMono,
+            fmt(2),
+            &stereo,
+            stereo.len() / 2,
+        );
         arms_agree("MonoToStereo", &MonoToStereo, fmt(1), &mono, mono.len() * 2);
         // both sides of the Q15 range: the narrow arm whose product fits i32
         // and the wide one that must stay 64-bit
@@ -279,7 +303,11 @@ fn every_two_armed_element_agrees_with_itself() {
         oa[1..].copy_from_slice(&mono);
         ob[1..].copy_from_slice(&other);
         mix_i16(&oa[1..], &ob[1..], &mut oc[1..]).unwrap();
-        assert_eq!(fast, oc[1..], "mix_i16: the arms disagree at {frames} frames");
+        assert_eq!(
+            fast,
+            oc[1..],
+            "mix_i16: the arms disagree at {frames} frames"
+        );
     }
 }
 
@@ -303,7 +331,9 @@ fn resampler_arms_agree_including_the_misaligned_one() {
         let mut fast = vec![0u8; cap];
         let mut got = Vec::new();
         for chunk in data.chunks(400 / 3 * 2) {
-            let n = rs.process(PcmBlock::new(f, Micros(0), chunk).unwrap(), &mut fast).unwrap();
+            let n = rs
+                .process(PcmBlock::new(f, Micros(0), chunk).unwrap(), &mut fast)
+                .unwrap();
             got.extend_from_slice(&fast[..n]);
         }
 
@@ -364,11 +394,8 @@ fn the_voice_front_end_composes_and_sizes_its_scratch() {
     // A short scratch must be REFUSED rather than silently truncating.
     let mut tiny = vec![0u8; 4];
     assert!(
-        pipe.process(
-            PcmBlock::new(f, Micros(0), &data).unwrap(),
-            &mut tiny
-        )
-        .is_err(),
+        pipe.process(PcmBlock::new(f, Micros(0), &data).unwrap(), &mut tiny)
+            .is_err(),
         "a 4-byte scratch must not be accepted"
     );
 

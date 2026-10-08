@@ -194,8 +194,7 @@ pub fn mix_i16(a: &[u8], b: &[u8], out: &mut [u8]) -> Result<()> {
     require_room(out, a.len())?;
     // FAST ARM: all THREE buffers must view as samples, or none does.
     let len = a.len();
-    if let (Some(sa), Some(sb), Some(so)) = (as_i16(a), as_i16(b), as_i16_mut(&mut out[..len]))
-    {
+    if let (Some(sa), Some(sb), Some(so)) = (as_i16(a), as_i16(b), as_i16_mut(&mut out[..len])) {
         // CHIP ARM: `ee.vadds.s16` IS this operation, eight lanes a slot.
         if crate::pie::mix(sa, sb, so) {
             return Ok(());

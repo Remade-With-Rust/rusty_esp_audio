@@ -183,8 +183,15 @@ impl Element for LinearResampler {
         if ch == 1 {
             let cap = self.max_output_frames(in_frames) * fb;
             if let (Some(src), Some(dst)) = (as_i16(input.data), as_i16_mut(&mut out[..cap])) {
-                let written =
-                    resample_mono(src, dst, self.last[0], self.in_r, self.out_r, end, &mut self.num);
+                let written = resample_mono(
+                    src,
+                    dst,
+                    self.last[0],
+                    self.in_r,
+                    self.out_r,
+                    end,
+                    &mut self.num,
+                );
                 self.last[0] = src[in_frames - 1];
                 self.num -= end;
                 return Ok(written * fb);
