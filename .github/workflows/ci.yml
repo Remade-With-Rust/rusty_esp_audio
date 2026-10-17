@@ -40,6 +40,30 @@ jobs:
       # FLAC through rusty_flac (its no-std branch, by git) and its ffmpeg oracle.
       - run: cargo test -p rusty_esp_audio-esp --features std,flac
 
+  # Every other job resolves from the committed Cargo.lock, so a sibling
+  # releasing a new MINOR cannot break them: the breakage waits, invisible,
+  # until someone edits a manifest and forces a re-resolve. In
+  # rusty_esp_sense it waited weeks while CI stayed green and the repo was
+  # unbuildable by anyone without a local Janus checkout.
+  #
+  # This job throws the lock away and resolves from scratch, so that drift
+  # surfaces on the day it happens. It does not build: resolution is the
+  # whole question, and `cargo metadata` answers it in seconds.
+  resolve:
+    name: resolve without the lock
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Authorise private sibling fetches
+        if: ${{ env.JANUS_GIT_TOKEN != '' }}
+        shell: bash
+        run: git config --global url."https://x-access-token:${JANUS_GIT_TOKEN}@github.com/".insteadOf "https://github.com/"
+      - name: resolve from scratch
+        run: |
+          rm -f Cargo.lock
+          cargo metadata --format-version 1 > /dev/null
+
   deny:
     name: cargo deny
     runs-on: ubuntu-latest

@@ -32,6 +32,12 @@ impl Element for Convert {
     }
 
     fn process(&mut self, input: PcmBlock<'_>, out: &mut [u8]) -> Result<usize> {
+        // CHIP ARM: the three INTEGER pairs. It declines the float pairs --
+        // PIE is an integer unit -- and anything that does not view as
+        // samples, which then takes the table below.
+        if let Some(n) = crate::pie::convert(&input, self.to, out) {
+            return Ok(n);
+        }
         pcm::convert(input, self.to, out)
     }
 }

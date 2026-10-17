@@ -59,9 +59,7 @@ impl FlacEncoder {
         // dropping) a rusty_flac::Encoder just to check it. The discarded
         // encoder allocated its channel table on every call — wasted work in a
         // per-block encode loop. These are exactly rusty_flac's own limits.
-        if format.channels == 0
-            || format.sample_rate_hz == 0
-            || format.sample_rate_hz >= (1 << 20)
+        if format.channels == 0 || format.sample_rate_hz == 0 || format.sample_rate_hz >= (1 << 20)
         {
             return Err(Error::InvalidFormat);
         }

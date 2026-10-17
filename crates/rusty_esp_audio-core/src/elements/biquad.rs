@@ -8,7 +8,7 @@
 //! difference in LSBs.
 
 use rusty_esp_core::error::{Error, Result};
-use rusty_esp_core::pcm::{PcmBlock, PcmFormat};
+use rusty_esp_core::pcm::{PcmBlock, PcmFormat, as_i16, as_i16_mut};
 
 use super::{MAX_CHANNELS, require_i16, require_room};
 use crate::pipeline::Element;
@@ -210,6 +210,139 @@ impl Element for Biquad {
         require_room(out, input.data.len())?;
         self.retune(input.format.sample_rate_hz)?;
         let ch = input.format.channels as usize;
+        let k = self.coef;
+        // `tick` carries FOUR state words per channel through `self`, so the
+        // generic form is eight memory round trips a sample plus five
+        // coefficient loads. Resolving `ch` once holds all of it in registers.
+        // FAST ARM: native halfword loads; the recurrence is untouched and
+        // the byte arms below stay the oracle.
+        let n = input.data.len();
+        if let (Some(src), Some(dst)) = (as_i16(input.data), as_i16_mut(&mut out[..n])) {
+            if ch == 1 {
+                let (mut x1, mut x2) = (self.x1[0], self.x2[0]);
+                let (mut y1, mut y2) = (self.y1[0], self.y2[0]);
+                for (i, o) in src.iter().zip(dst.iter_mut()) {
+                    let x = f32::from(*i);
+                    let y = k.b0 * x + k.b1 * x1 + k.b2 * x2 - k.a1 * y1 - k.a2 * y2;
+                    x2 = x1;
+                    x1 = x;
+                    y2 = y1;
+                    y1 = y;
+                    *o = round_sat16(y);
+                }
+                self.x1[0] = x1;
+                self.x2[0] = x2;
+                self.y1[0] = y1;
+                self.y2[0] = y2;
+                return Ok(n);
+            }
+            if ch == 2 {
+                let (mut lx1, mut lx2) = (self.x1[0], self.x2[0]);
+                let (mut ly1, mut ly2) = (self.y1[0], self.y2[0]);
+                let (mut rx1, mut rx2) = (self.x1[1], self.x2[1]);
+                let (mut ry1, mut ry2) = (self.y1[1], self.y2[1]);
+                for (i, o) in src.chunks_exact(2).zip(dst.chunks_exact_mut(2)) {
+                    let x = f32::from(i[0]);
+                    let y = k.b0 * x + k.b1 * lx1 + k.b2 * lx2 - k.a1 * ly1 - k.a2 * ly2;
+                    lx2 = lx1;
+                    lx1 = x;
+                    ly2 = ly1;
+                    ly1 = y;
+                    o[0] = round_sat16(y);
+                    let x = f32::from(i[1]);
+                    let y = k.b0 * x + k.b1 * rx1 + k.b2 * rx2 - k.a1 * ry1 - k.a2 * ry2;
+                    rx2 = rx1;
+                    rx1 = x;
+                    ry2 = ry1;
+                    ry1 = y;
+                    o[1] = round_sat16(y);
+                }
+                self.x1[0] = lx1;
+                self.x2[0] = lx2;
+                self.y1[0] = ly1;
+                self.y2[0] = ly2;
+                self.x1[1] = rx1;
+                self.x2[1] = rx2;
+                self.y1[1] = ry1;
+                self.y2[1] = ry2;
+                return Ok(n);
+            }
+        }
+
+        if ch == 1 {
+            let (mut x1, mut x2) = (self.x1[0], self.x2[0]);
+            let (mut y1, mut y2) = (self.y1[0], self.y2[0]);
+            // Two samples a trip. The second sample's state is the first's
+            // written out by hand -- x1 becomes `a`, x2 becomes the old x1,
+            // and likewise for y -- so the arithmetic per sample is unchanged
+            // and only the counter and the pointer bumps are amortised. Same
+            // shape that paid on `DcBlock`.
+            let n = input.data.len();
+            let mut ci = input.data.chunks_exact(4);
+            let mut co = out[..n].chunks_exact_mut(4);
+            for (fi, fo) in ci.by_ref().zip(co.by_ref()) {
+                let a = f32::from(get_i16(fi));
+                let ya = k.b0 * a + k.b1 * x1 + k.b2 * x2 - k.a1 * y1 - k.a2 * y2;
+                put_i16(fo, round_sat16(ya));
+                let b = f32::from(get_i16(&fi[2..]));
+                let yb = k.b0 * b + k.b1 * a + k.b2 * x1 - k.a1 * ya - k.a2 * y1;
+                put_i16(&mut fo[2..], round_sat16(yb));
+                x2 = a;
+                x1 = b;
+                y2 = ya;
+                y1 = yb;
+            }
+            for (fi, fo) in ci
+                .remainder()
+                .chunks_exact(2)
+                .zip(co.into_remainder().chunks_exact_mut(2))
+            {
+                let x = f32::from(get_i16(fi));
+                let y = k.b0 * x + k.b1 * x1 + k.b2 * x2 - k.a1 * y1 - k.a2 * y2;
+                x2 = x1;
+                x1 = x;
+                y2 = y1;
+                y1 = y;
+                put_i16(fo, round_sat16(y));
+            }
+            self.x1[0] = x1;
+            self.x2[0] = x2;
+            self.y1[0] = y1;
+            self.y2[0] = y2;
+            return Ok(input.data.len());
+        }
+        if ch == 2 {
+            let (mut lx1, mut lx2) = (self.x1[0], self.x2[0]);
+            let (mut ly1, mut ly2) = (self.y1[0], self.y2[0]);
+            let (mut rx1, mut rx2) = (self.x1[1], self.x2[1]);
+            let (mut ry1, mut ry2) = (self.y1[1], self.y2[1]);
+            for (fi, fo) in input.data.chunks_exact(4).zip(out.chunks_exact_mut(4)) {
+                let x = f32::from(get_i16(fi));
+                let y = k.b0 * x + k.b1 * lx1 + k.b2 * lx2 - k.a1 * ly1 - k.a2 * ly2;
+                lx2 = lx1;
+                lx1 = x;
+                ly2 = ly1;
+                ly1 = y;
+                put_i16(fo, round_sat16(y));
+                let x = f32::from(get_i16(&fi[2..]));
+                let y = k.b0 * x + k.b1 * rx1 + k.b2 * rx2 - k.a1 * ry1 - k.a2 * ry2;
+                rx2 = rx1;
+                rx1 = x;
+                ry2 = ry1;
+                ry1 = y;
+                put_i16(&mut fo[2..], round_sat16(y));
+            }
+            self.x1[0] = lx1;
+            self.x2[0] = lx2;
+            self.y1[0] = ly1;
+            self.y2[0] = ly2;
+            self.x1[1] = rx1;
+            self.x2[1] = rx2;
+            self.y1[1] = ry1;
+            self.y2[1] = ry2;
+            return Ok(input.data.len());
+        }
+        // Unreachable today (MAX_CHANNELS is 2); kept as the oracle.
         for (fi, fo) in input
             .data
             .chunks_exact(ch * 2)

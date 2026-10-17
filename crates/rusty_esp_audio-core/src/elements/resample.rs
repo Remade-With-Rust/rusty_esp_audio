@@ -5,7 +5,7 @@
 //! aliasing is.
 
 use rusty_esp_core::error::{Error, Result};
-use rusty_esp_core::pcm::{PcmBlock, PcmFormat};
+use rusty_esp_core::pcm::{PcmBlock, PcmFormat, as_i16, as_i16_mut};
 
 use super::{MAX_CHANNELS, require_i16, require_room};
 use crate::pipeline::Element;
@@ -34,6 +34,74 @@ pub struct LinearResampler {
     num: u64,
     last: [i16; MAX_CHANNELS],
     primed: bool,
+}
+
+// REFUTED, measured worse, and removed rather than parked -- a dead struct
+// field costs RAM on a chip. `rem` is always below `out_r`, so a small
+// reduced ratio has only a handful of distinct phases (16k <-> 48k is
+// `out_r = 3`), and precomputing all of them in `new` turns two hardware
+// divides per OUTPUT FRAME into one indexed load. It measured **+3.7%** on an
+// ESP32-S3 (2026-09-19): two `quou` on a small divisor are already cheap, and
+// the indexed load plus the branch selecting it cost more than they save.
+
+/// `(rem << 32) / out_r`, the interpolation phase as Q32.
+///
+/// A 64-bit division is a LIBCALL on a 32-bit core. `out_r` is a *reduced*
+/// rate ratio, so it fits 16 bits, and long division in base 2^16 gives the
+/// identical quotient from two 32-bit divides, which are instructions:
+/// `rem < out_r`, so the quotient's high half is `(rem << 16) / out_r` and
+/// the low half is that remainder shifted and divided again.
+#[inline]
+fn frac_q32(rem: u64, out_r: u64) -> u64 {
+    if out_r < 0x1_0000 {
+        let d = out_r as u32;
+        let hi = (rem as u32) << 16;
+        let (q1, r1) = (hi / d, hi % d);
+        u64::from((q1 << 16) | ((r1 << 16) / d))
+    } else {
+        (rem << 32) / out_r
+    }
+}
+
+/// The mono resample loop over ALIGNED samples -- the voice path.
+///
+/// One halfword load per endpoint and one halfword store per output frame,
+/// where the byte form needs two loads plus a shift and an or, and two
+/// stores. The arithmetic is untouched, so the byte loop in `process` stays
+/// the oracle. Returns the output frames written; `num` is advanced in place.
+fn resample_mono(
+    src: &[i16],
+    dst: &mut [i16],
+    last0: i16,
+    in_r: u64,
+    out_r: u64,
+    end: u64,
+    num: &mut u64,
+) -> usize {
+    let mut written = 0usize;
+    let mut idx = (*num / out_r) as usize;
+    let mut rem = *num % out_r;
+    // The endpoints are a function of `idx` alone, and `idx` holds still for
+    // several output frames when upsampling -- three at 16k -> 48k.
+    let (mut held, mut x0, mut dx) = (usize::MAX, 0i64, 0i64);
+    while *num < end {
+        let frac = frac_q32(rem, out_r);
+        if idx != held {
+            x0 = i64::from(if idx == 0 { last0 } else { src[idx - 1] });
+            dx = i64::from(src[idx]) - x0;
+            held = idx;
+        }
+        let y = x0 + ((dx * frac as i64 + (1 << 31)) >> 32);
+        dst[written] = y as i16;
+        written += 1;
+        *num += in_r;
+        rem += in_r;
+        while rem >= out_r {
+            rem -= out_r;
+            idx += 1;
+        }
+    }
+    written
 }
 
 const fn gcd(mut a: u64, mut b: u64) -> u64 {
@@ -109,23 +177,86 @@ impl Element for LinearResampler {
         }
         // Interpolation needs frame(idx) to exist, i.e. shifted idx < in_frames.
         let end = in_frames as u64 * self.out_r;
+
+        // FAST ARM: mono over aligned samples. The byte loop below is the
+        // oracle and takes stereo, misaligned buffers and big-endian targets.
+        if ch == 1 {
+            let cap = self.max_output_frames(in_frames) * fb;
+            if let (Some(src), Some(dst)) = (as_i16(input.data), as_i16_mut(&mut out[..cap])) {
+                let written = resample_mono(
+                    src,
+                    dst,
+                    self.last[0],
+                    self.in_r,
+                    self.out_r,
+                    end,
+                    &mut self.num,
+                );
+                self.last[0] = src[in_frames - 1];
+                self.num -= end;
+                return Ok(written * fb);
+            }
+        }
+
         let mut written = 0usize;
+        // `num` only ever advances by `in_r`, so its quotient and remainder by
+        // `out_r` can be CARRIED instead of recomputed. That retires two
+        // 64-bit divisions per output frame -- and a 64-bit division on this
+        // core is a libcall, not an instruction -- for a compare and a
+        // subtract per whole input frame crossed.
+        let mut idx = (self.num / self.out_r) as usize;
+        let mut rem = self.num % self.out_r;
+        // The mono arm's cached interpolation endpoints; `held` is the `idx`
+        // they were read for, and `usize::MAX` is never a valid frame index.
+        let (mut held, mut x0, mut dx) = (usize::MAX, 0i64, 0i64);
         while self.num < end {
-            let idx = (self.num / self.out_r) as usize;
-            let rem = self.num % self.out_r;
-            let frac = (rem << 32) / self.out_r;
-            for c in 0..ch {
-                let x0 = i64::from(if idx == 0 {
-                    self.last[c]
-                } else {
-                    frame(idx - 1, c)
-                });
-                let x1 = i64::from(frame(idx, c));
-                let y = x0 + (((x1 - x0) * frac as i64 + (1 << 31)) >> 32);
-                put_i16(&mut out[written * fb + c * 2..], y as i16);
+            // The last 64-bit division, and the one that costs: a libcall on
+            // this core. When `out_r` fits 16 bits -- it is a REDUCED rate
+            // ratio, so 48 000 is already an extreme -- the same quotient
+            // comes out of two 32-bit divisions, which are instructions.
+            // Long division in base 2^16: `rem < out_r`, so the quotient's
+            // high half is `(rem << 16) / out_r` and the low half is that
+            // remainder shifted and divided again.
+            let frac = frac_q32(rem, self.out_r);
+            // Mono is the voice path, and it is where the generic form costs
+            // most: `frame` multiplies by a runtime frame size and re-derives
+            // the channel offset for a loop that runs ONCE.
+            if ch == 1 {
+                // The two endpoints are a function of `idx` alone, and when
+                // upsampling `idx` holds still for several output frames --
+                // three of them at 16k -> 48k. Re-reading them per output
+                // frame pays two bounds-checked loads and a byte assembly each
+                // to fetch what has not changed.
+                if idx != held {
+                    x0 = i64::from(if idx == 0 {
+                        self.last[0]
+                    } else {
+                        get_i16(&input.data[(idx - 1) * 2..])
+                    });
+                    dx = i64::from(get_i16(&input.data[idx * 2..])) - x0;
+                    held = idx;
+                }
+                let y = x0 + ((dx * frac as i64 + (1 << 31)) >> 32);
+                put_i16(&mut out[written * 2..], y as i16);
+            } else {
+                for c in 0..ch {
+                    let x0 = i64::from(if idx == 0 {
+                        self.last[c]
+                    } else {
+                        frame(idx - 1, c)
+                    });
+                    let x1 = i64::from(frame(idx, c));
+                    let y = x0 + (((x1 - x0) * frac as i64 + (1 << 31)) >> 32);
+                    put_i16(&mut out[written * fb + c * 2..], y as i16);
+                }
             }
             written += 1;
             self.num += self.in_r;
+            rem += self.in_r;
+            while rem >= self.out_r {
+                rem -= self.out_r;
+                idx += 1;
+            }
         }
         // Carry the last frame and rebase the phase onto it.
         for c in 0..ch {

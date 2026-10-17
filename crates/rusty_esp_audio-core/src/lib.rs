@@ -64,7 +64,198 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Level of an interleaved i16 block in dBFS — `rusty_esp_dsp`'s reduction
 /// (moved there in D0, 2026-09-02), at the path this crate always had.
-pub use rusty_esp_dsp::sample::rms_dbfs_i16;
+#[cfg(not(feature = "pie-s3"))]
+pub use rusty_esp_dsp::sample::{peak_abs_i16, rms_dbfs_i16};
+
+#[cfg(feature = "pie-s3")]
+pub use pie::{peak_abs_i16, rms_dbfs_i16};
+
+/// The chip twins of the reductions this crate re-exports.
+///
+/// `rms_dbfs_i16` is the one that matters: the shipping PDM firmware calls
+/// it once per captured block, right after `Pipeline::process`, and until
+/// this module existed it ran the scalar while a measured −79.6% twin sat
+/// unreachable in `rusty_esp_dsp-esp`.
+///
+/// Each function is `cfg`-switched on the TARGET, not on the feature, so a
+/// host build of this crate with `pie-s3` on still runs the oracle and the
+/// tests still mean what they say.
+#[cfg(feature = "pie-s3")]
+pub(crate) mod pie {
+    /// Level of an interleaved i16 block in dBFS. See
+    /// [`rusty_esp_dsp::sample::rms_dbfs_i16`], which this is gated against.
+    #[must_use]
+    pub fn rms_dbfs_i16(samples: &[u8]) -> f32 {
+        #[cfg(target_arch = "xtensa")]
+        {
+            rusty_esp_dsp_esp::pie_s3::rms_dbfs_i16(samples)
+        }
+        #[cfg(not(target_arch = "xtensa"))]
+        {
+            rusty_esp_dsp::sample::rms_dbfs_i16(samples)
+        }
+    }
+
+    /// Largest magnitude in an i16 block. See
+    /// [`rusty_esp_dsp::sample::peak_abs_i16`], which this is gated against.
+    #[must_use]
+    pub fn peak_abs_i16(a: &[i16]) -> u16 {
+        #[cfg(target_arch = "xtensa")]
+        {
+            rusty_esp_dsp_esp::pie_s3::peak_abs_i16(a)
+        }
+        #[cfg(not(target_arch = "xtensa"))]
+        {
+            rusty_esp_dsp::sample::peak_abs_i16(a)
+        }
+    }
+
+    // ---- the element helpers -----------------------------------------
+    //
+    // Each returns `true` when it handled the block. The `pie-s3`-off twin
+    // of each returns `false` from a `const`-foldable body, so the caller's
+    // scalar arm is never dead code and no `unreachable_code` lint fires.
+
+    /// Mono to stereo. [`crate::elements::MonoToStereo`] is the oracle.
+    pub fn mono_to_stereo(src: &[i16], dst: &mut [i16]) -> bool {
+        #[cfg(target_arch = "xtensa")]
+        {
+            rusty_esp_dsp_esp::pie_s3::mono_to_stereo_i16(src, dst);
+            true
+        }
+        #[cfg(not(target_arch = "xtensa"))]
+        {
+            let _ = (src, dst);
+            false
+        }
+    }
+
+    /// Stereo to mono. [`crate::elements::StereoToMono`] is the oracle.
+    pub fn stereo_to_mono(src: &[i16], dst: &mut [i16]) -> bool {
+        #[cfg(target_arch = "xtensa")]
+        {
+            rusty_esp_dsp_esp::pie_s3::stereo_to_mono_i16(src, dst);
+            true
+        }
+        #[cfg(not(target_arch = "xtensa"))]
+        {
+            let _ = (src, dst);
+            false
+        }
+    }
+
+    /// Saturating sum of two i16 streams. [`crate::elements::mix_i16`] is
+    /// the oracle.
+    pub fn mix(a: &[i16], b: &[i16], out: &mut [i16]) -> bool {
+        #[cfg(target_arch = "xtensa")]
+        {
+            rusty_esp_dsp_esp::pie_s3::mix_i16(a, b, out);
+            true
+        }
+        #[cfg(not(target_arch = "xtensa"))]
+        {
+            let _ = (a, b, out);
+            false
+        }
+    }
+
+    /// The three INTEGER `convert` pairs. The element's own fast arms are
+    /// i16<->f32, which the PIE unit cannot touch -- it is integer-only --
+    /// and the integer pairs went through the generic per-sample table.
+    ///
+    /// Two of the three need no arithmetic once the little-endian layout is
+    /// taken seriously: `(x as i32) << 16` is `x` interleaved with a zero
+    /// halfword below it, and `(x >> 16) as i16` is the high halfword.
+    ///
+    /// Returns the byte count it wrote, or `None` for a pair it does not
+    /// handle or a buffer that does not view as samples.
+    pub fn convert(
+        input: &rusty_esp_core::pcm::PcmBlock<'_>,
+        to: rusty_esp_core::pcm::SampleFormat,
+        out: &mut [u8],
+    ) -> Option<usize> {
+        #[cfg(target_arch = "xtensa")]
+        {
+            use rusty_esp_core::pcm::SampleFormat::{I16, I24In32, I32};
+            use rusty_esp_core::pcm::{as_i16, as_i16_mut, as_i32, as_i32_mut};
+            let from = input.format.sample;
+            let n = rusty_esp_dsp::sample::pcm::output_bytes(from, to, input.data.len());
+            if out.len() < n {
+                return None;
+            }
+            match (from, to) {
+                (I16, I32) | (I16, I24In32) => {
+                    let si = as_i16(input.data)?;
+                    let so = as_i32_mut(&mut out[..n])?;
+                    rusty_esp_dsp_esp::pie_s3::convert_i16_to_i32(si, so);
+                    Some(n)
+                }
+                (I32, I16) | (I24In32, I16) => {
+                    let si = as_i32(input.data)?;
+                    let so = as_i16_mut(&mut out[..n])?;
+                    rusty_esp_dsp_esp::pie_s3::convert_i32_to_i16(si, so);
+                    Some(n)
+                }
+                (I32, I24In32) => {
+                    let si = as_i32(input.data)?;
+                    let so = as_i32_mut(&mut out[..n])?;
+                    rusty_esp_dsp_esp::pie_s3::convert_i32_to_i24in32(si, so);
+                    Some(n)
+                }
+                _ => None,
+            }
+        }
+        #[cfg(not(target_arch = "xtensa"))]
+        {
+            let _ = (input, to, out);
+            None
+        }
+    }
+
+    /// `(x * q15 + (1 << 14)) >> 15`, clamped. The twin restricts itself to
+    /// `|q15| <= 32767` and hands anything louder back, so the caller must
+    /// keep its own wide path.
+    pub fn gain(src: &[i16], q15: i32, dst: &mut [i16]) -> bool {
+        #[cfg(target_arch = "xtensa")]
+        {
+            if q15.unsigned_abs() <= 32767 {
+                rusty_esp_dsp_esp::pie_s3::gain_i16(src, q15, dst);
+                return true;
+            }
+            false
+        }
+        #[cfg(not(target_arch = "xtensa"))]
+        {
+            let _ = (src, q15, dst);
+            false
+        }
+    }
+}
+
+/// The `pie-s3`-off twin of [`pie`]: every helper declines, so each element
+/// takes the scalar arm it already had.
+#[cfg(not(feature = "pie-s3"))]
+pub(crate) mod pie {
+    pub fn mono_to_stereo(_: &[i16], _: &mut [i16]) -> bool {
+        false
+    }
+    pub fn stereo_to_mono(_: &[i16], _: &mut [i16]) -> bool {
+        false
+    }
+    pub fn mix(_: &[i16], _: &[i16], _: &mut [i16]) -> bool {
+        false
+    }
+    pub fn gain(_: &[i16], _: i32, _: &mut [i16]) -> bool {
+        false
+    }
+    pub fn convert(
+        _: &rusty_esp_core::pcm::PcmBlock<'_>,
+        _: rusty_esp_core::pcm::SampleFormat,
+        _: &mut [u8],
+    ) -> Option<usize> {
+        None
+    }
+}
 
 /// Write an `i16` sample as two little-endian bytes.
 #[inline]
@@ -89,14 +280,10 @@ pub(crate) fn sat16(v: i32) -> i16 {
 /// Round an `f32` to the nearest `i16`, ties away from zero, saturating.
 #[inline]
 pub(crate) fn round_sat16(v: f32) -> i16 {
-    let r = libm::roundf(v);
-    if r >= 32767.0 {
-        i16::MAX
-    } else if r <= -32768.0 {
-        i16::MIN
-    } else {
-        r as i16
-    }
+    // One definition, in the crate every element already speaks. See
+    // `rusty_esp_core::pcm::round_sat_i16` for why it truncates once and why
+    // its final conversion is unchecked.
+    rusty_esp_core::pcm::round_sat_i16(v)
 }
 
 #[cfg(test)]

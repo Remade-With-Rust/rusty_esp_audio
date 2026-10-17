@@ -2,7 +2,7 @@
 //! front end leaves on the signal.
 
 use rusty_esp_core::error::Result;
-use rusty_esp_core::pcm::{PcmBlock, PcmFormat};
+use rusty_esp_core::pcm::{PcmBlock, PcmFormat, as_i16, as_i16_mut};
 
 use super::{MAX_CHANNELS, require_i16, require_room};
 use crate::pipeline::Element;
@@ -73,6 +73,107 @@ impl Element for DcBlock {
         self.retune(input.format.sample_rate_hz);
         let ch = input.format.channels as usize;
         let r = self.r;
+        // `ch` is fixed for the whole call, so resolving it once lets the state
+        // live in REGISTERS for the block. The generic form re-reads `x1[c]`
+        // and `y1[c]` out of the struct and writes them back every frame --
+        // four memory round trips a sample to carry two floats.
+        // FAST ARM: native halfword loads. The recurrence is untouched --
+        // only how each sample is fetched and stored changes -- so the byte
+        // arms below stay the oracle, bit for bit.
+        let n = input.data.len();
+        if let (Some(src), Some(dst)) = (as_i16(input.data), as_i16_mut(&mut out[..n])) {
+            if ch == 1 {
+                let (mut x1, mut y1) = (self.x1[0], self.y1[0]);
+                for (i, o) in src.iter().zip(dst.iter_mut()) {
+                    let x = f32::from(*i);
+                    let y = x - x1 + r * y1;
+                    x1 = x;
+                    y1 = y;
+                    *o = round_sat16(y);
+                }
+                self.x1[0] = x1;
+                self.y1[0] = y1;
+                return Ok(n);
+            }
+            if ch == 2 {
+                let (mut xl, mut yl) = (self.x1[0], self.y1[0]);
+                let (mut xr, mut yr) = (self.x1[1], self.y1[1]);
+                for (i, o) in src.chunks_exact(2).zip(dst.chunks_exact_mut(2)) {
+                    let l = f32::from(i[0]);
+                    let ly = l - xl + r * yl;
+                    xl = l;
+                    yl = ly;
+                    o[0] = round_sat16(ly);
+                    let rv = f32::from(i[1]);
+                    let ry = rv - xr + r * yr;
+                    xr = rv;
+                    yr = ry;
+                    o[1] = round_sat16(ry);
+                }
+                self.x1[0] = xl;
+                self.y1[0] = yl;
+                self.x1[1] = xr;
+                self.y1[1] = yr;
+                return Ok(n);
+            }
+        }
+
+        if ch == 1 {
+            let (mut x1, mut y1) = (self.x1[0], self.y1[0]);
+            // Two samples a trip. The recurrence is serial and stays serial --
+            // nothing here breaks the dependency -- so this only amortises the
+            // counter and the two pointer bumps over twice the work.
+            let n = input.data.len();
+            let mut ci = input.data.chunks_exact(4);
+            let mut co = out[..n].chunks_exact_mut(4);
+            for (fi, fo) in ci.by_ref().zip(co.by_ref()) {
+                let a = f32::from(get_i16(fi));
+                let ya = a - x1 + r * y1;
+                put_i16(fo, round_sat16(ya));
+                let b = f32::from(get_i16(&fi[2..]));
+                let yb = b - a + r * ya;
+                put_i16(&mut fo[2..], round_sat16(yb));
+                x1 = b;
+                y1 = yb;
+            }
+            for (fi, fo) in ci
+                .remainder()
+                .chunks_exact(2)
+                .zip(co.into_remainder().chunks_exact_mut(2))
+            {
+                let x = f32::from(get_i16(fi));
+                let y = x - x1 + r * y1;
+                x1 = x;
+                y1 = y;
+                put_i16(fo, round_sat16(y));
+            }
+            self.x1[0] = x1;
+            self.y1[0] = y1;
+            return Ok(input.data.len());
+        }
+        if ch == 2 {
+            let (mut xl, mut yl) = (self.x1[0], self.y1[0]);
+            let (mut xr, mut yr) = (self.x1[1], self.y1[1]);
+            for (fi, fo) in input.data.chunks_exact(4).zip(out.chunks_exact_mut(4)) {
+                let l = f32::from(get_i16(fi));
+                let ly = l - xl + r * yl;
+                xl = l;
+                yl = ly;
+                put_i16(fo, round_sat16(ly));
+                let rr = f32::from(get_i16(&fi[2..]));
+                let ry = rr - xr + r * yr;
+                xr = rr;
+                yr = ry;
+                put_i16(&mut fo[2..], round_sat16(ry));
+            }
+            self.x1[0] = xl;
+            self.y1[0] = yl;
+            self.x1[1] = xr;
+            self.y1[1] = yr;
+            return Ok(input.data.len());
+        }
+        // MAX_CHANNELS is 2 and `require_i16` rejects more, so nothing reaches
+        // here today; it stays as the oracle the two arms above must match.
         for (fi, fo) in input
             .data
             .chunks_exact(ch * 2)

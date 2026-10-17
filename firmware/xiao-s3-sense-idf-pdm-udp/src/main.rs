@@ -1,7 +1,14 @@
 //! Janus J2 / A1 on the XIAO ESP32-S3 Sense: the PDM microphone, two ways.
 //!
-//! **With a destination compiled in** it is the J2 demo: microphone into raw
-//! PCM over UDP, which `ffplay` reads directly.
+//! **With a destination compiled in** it is the J2 demo: microphone through a
+//! voice front end and out as PCM over UDP, which `ffplay` reads directly.
+//!
+//! The front end is three stages, in the order a voice front end goes:
+//! [`DcBlock`] takes out the PDM converter's offset, a [`Biquad`] high-pass
+//! at 80 Hz takes out the rumble below speech, and [`Agc`] brings the level
+//! up to something a far end can use. Each block is then reported with both
+//! its RMS level and its PEAK: an RMS figure hides clipping, and make-up gain
+//! is exactly where clipping appears.
 //!
 //! ```sh
 //! JANUS_WIFI_SSID=mynet JANUS_WIFI_PASS=secret JANUS_AUDIO_DEST=192.168.1.20:5004 cargo run --release
@@ -34,9 +41,9 @@ use esp_idf_svc::nvs::EspDefaultNvsPartition;
 use esp_idf_svc::sys::link_patches;
 use esp_idf_svc::wifi::{BlockingWifi, ClientConfiguration, Configuration, EspWifi};
 use rusty_esp_audio_core::codec::wav::WavHeader;
-use rusty_esp_audio_core::elements::{DcBlock, EnergyVad};
-use rusty_esp_audio_core::esp_core::pcm::PcmFormat;
-use rusty_esp_audio_core::{rms_dbfs_i16, AudioSink, AudioSource, Element, Pipeline};
+use rusty_esp_audio_core::elements::{Agc, Biquad, BiquadKind, DcBlock, EnergyVad};
+use rusty_esp_audio_core::esp_core::pcm::{as_i16, PcmFormat};
+use rusty_esp_audio_core::{peak_abs_i16, rms_dbfs_i16, AudioSink, AudioSource, Element, Pipeline};
 use rusty_esp_audio_esp::idf::PdmIn;
 use rusty_esp_audio_esp::net::UdpPcmSender;
 
@@ -111,8 +118,24 @@ fn main() -> Result<()> {
     )
     .context("pdm mic")?;
 
+    // A voice front end, in the order a voice front end goes: remove the
+    // PDM converter's DC offset, then the rumble below speech, then bring the
+    // level up to something a far end can use.
+    //
+    // It was one stage (DcBlock) until the reachability census: a microphone
+    // that ships raw is not what this crate's elements are for, and every one
+    // of them but DcBlock had no caller outside a test.
     let mut dc = DcBlock::new();
-    let mut pipeline = Pipeline::new([&mut dc as &mut dyn Element]);
+    let mut hp = Biquad::new(BiquadKind::HighPass {
+        f0: 80.0,
+        q: core::f32::consts::FRAC_1_SQRT_2,
+    });
+    let mut agc = Agc::default();
+    let mut pipeline = Pipeline::new([
+        &mut dc as &mut dyn Element,
+        &mut hp as &mut dyn Element,
+        &mut agc as &mut dyn Element,
+    ]);
     let mut vad = EnergyVad::default();
     let mut buf = vec![0u8; BLOCK_BYTES];
     let mut scratch = vec![
@@ -138,7 +161,7 @@ fn main() -> Result<()> {
 /// The J2 demo: every block out as a datagram, counters once a second.
 fn stream(
     mic: &mut PdmIn<'_>,
-    pipeline: &mut Pipeline<'_, 1>,
+    pipeline: &mut Pipeline<'_, 3>,
     vad: &mut EnergyVad,
     buf: &mut [u8],
     scratch: &mut [u8],
@@ -160,6 +183,9 @@ fn stream(
             continue;
         };
         let level = rms_dbfs_i16(out.data);
+        // RMS hides clipping, and a front end with make-up gain is exactly
+        // where clipping appears. `peak_abs_i16` is 32 768 at full scale.
+        let peak = as_i16(out.data).map_or(0, peak_abs_i16);
         vad.judge(level);
         if tx.write(out).is_err() {
             dropped += 1;
@@ -168,7 +194,7 @@ fn stream(
         if blocks % 50 == 0 {
             let secs = started.elapsed().as_secs_f32().max(0.001);
             println!(
-                "MIC blocks={blocks} rate={:.2}/s dropped={dropped} level={level:.1}dBFS speech={}/{} short_reads={}",
+                "MIC blocks={blocks} rate={:.2}/s dropped={dropped} level={level:.1}dBFS peak={peak} speech={}/{} short_reads={}",
                 blocks as f32 / secs,
                 vad.speech_blocks,
                 vad.blocks,
@@ -181,7 +207,7 @@ fn stream(
 /// The A1 bench: rate first with nothing written, then a fixed dump.
 fn bench(
     mic: &mut PdmIn<'_>,
-    pipeline: &mut Pipeline<'_, 1>,
+    pipeline: &mut Pipeline<'_, 3>,
     vad: &mut EnergyVad,
     buf: &mut [u8],
     scratch: &mut [u8],
@@ -203,6 +229,7 @@ fn bench(
     let mut empty: u64 = 0;
     let mut level_min = f32::INFINITY;
     let mut level_max = f32::NEG_INFINITY;
+    let mut peak_max: u16 = 0;
     while started.elapsed().as_secs() < measure_secs {
         let block = match mic.read(buf) {
             Ok(b) => b,
@@ -218,6 +245,9 @@ fn bench(
         let level = rms_dbfs_i16(out.data);
         level_min = level_min.min(level);
         level_max = level_max.max(level);
+        // RMS hides clipping, and a front end with make-up gain is where
+        // clipping appears. 32 768 is full scale.
+        peak_max = peak_max.max(as_i16(out.data).map_or(0, peak_abs_i16));
         vad.judge(level);
         blocks += 1;
     }
@@ -228,7 +258,7 @@ fn bench(
     // rate is derived from them.
     let samples = blocks * (BLOCK_BYTES as u64) / FORMAT.frame_bytes() as u64;
     println!(
-        "MIC work blocks={blocks} samples={samples} bytes={} driver_blocks={} short_reads={} read_errors={errors} pipeline_empty={empty}",
+        "MIC work blocks={blocks} samples={samples} bytes={} driver_blocks={} short_reads={} read_errors={errors} pipeline_empty={empty} peak_max={peak_max}",
         blocks * BLOCK_BYTES as u64,
         mic.blocks,
         mic.short_reads
