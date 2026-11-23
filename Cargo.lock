@@ -1053,9 +1053,9 @@ dependencies = [
 
 [[package]]
 name = "rusty_flac"
-version = "0.2.1"
+version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "402d9f234b96d41e863fcf63eea4385be52ec7ee61cd68a4c615cc6a9cc6f3df"
+checksum = "a8772fd8e55385dc7104fa6fc62b7fd11905bb596c8ee9e76b8236f2e3cd5a0d"
 dependencies = [
  "libm",
 ]
